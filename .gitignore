@@ -1,0 +1,13 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+token.pickle
+client_secrets.json
+output/
+*.mp4
+*.mp3
+*.jpg
+*.png
+.DS_Store

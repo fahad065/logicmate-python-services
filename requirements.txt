@@ -1,0 +1,8 @@
+# NexAgent Python Services
+fastapi==0.115.0
+uvicorn==0.30.0
+python-dotenv==1.0.0
+openai==1.51.0
+requests==2.32.0
+rich==13.9.0
+python-multipart==0.0.9
