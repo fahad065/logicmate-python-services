@@ -26,7 +26,8 @@ from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel
 from typing import Optional
 
-app = FastAPI(title="NexAgent Pipeline Service", version="2.0.0")
+app = FastAPI(title="LogicMate Pipeline Service", version="2.0.0")
+
 
 NESTJS_TOKEN = os.getenv("NESTJS_SERVICE_TOKEN", "")
 
@@ -62,7 +63,7 @@ def verify_token(authorization: str = Header(None)):
 # ── Routes ────────────────────────────────────────────────────
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "nexagent-pipelines", "version": "2.0.0"}
+    return {"status": "ok", "service": "logicmate-pipelines", "version": "2.0.0"}
 
 
 @app.post("/pipeline/run", response_model=PipelineResponse)
