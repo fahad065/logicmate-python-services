@@ -97,20 +97,28 @@ def generate_clip(
     resp = requests.post(GENERATE_URL, headers=headers, json=payload, timeout=30)
     resp.raise_for_status()
 
-    prediction_id = resp.json().get("id") or resp.json().get("prediction_id")
+    resp_json = resp.json()
+    prediction_id = (
+        resp_json.get("id") or
+        resp_json.get("prediction_id") or
+        resp_json.get("data", {}).get("id")  # ← Atlas wraps in "data"
+    )
     if not prediction_id:
         raise Exception(f"No prediction_id returned: {resp.text}")
 
     # Poll until complete
-    poll_url = POLL_URL.format(prediction_id=prediction_id)
+    resp_data = resp.json().get("data", {})
+    poll_url = resp_data.get("urls", {}).get("get") or POLL_URL.format(prediction_id=prediction_id)
+    
     for attempt in range(60):
         time.sleep(15)
         poll = requests.get(poll_url, headers=headers, timeout=20)
         data = poll.json()
-        status = data.get("status", "")
-
+        inner = data.get("data", data)
+        status = inner.get("status", "")
         if status == "succeeded":
-            video_url = data.get("output") or data.get("video_url")
+            outputs = inner.get("outputs")
+            video_url = outputs[0] if isinstance(outputs, list) and outputs else inner.get("output") or inner.get("video_url")
             if isinstance(video_url, list):
                 video_url = video_url[0]
             break
