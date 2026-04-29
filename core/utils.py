@@ -70,12 +70,24 @@ def find_resumable_folder(output_base: str, pipeline_type: str, user_id: str) ->
     return None
 
 
-def cleanup_large_files(folder_path: str):
+def cleanup_large_files(folder_path: str, delete_all: bool = False):
     """
-    Delete large video/audio files after successful upload.
-    Keeps metadata.json, thumbnail, script for records.
-    Saves ~1.5GB per video.
+    On Railway/production: delete entire output folder after upload.
+    On local: keep metadata, script, thumbnail for records.
     """
+    import platform
+    is_railway = os.getenv("NODE_ENV") == "production"
+
+    if is_railway or delete_all:
+        # Delete entire folder — Railway has no persistent storage anyway
+        try:
+            shutil.rmtree(folder_path, ignore_errors=True)
+            print(f"[Cleanup] ✓ Deleted entire folder: {folder_path}")
+        except Exception as e:
+            print(f"[Cleanup] Failed to delete folder: {e}")
+        return
+
+    # Local — keep important files
     keep_extensions = {".json", ".txt", ".jpg", ".jpeg", ".png"}
     keep_files = {"metadata.json", "script.txt", "thumbnail.jpg", "cover.jpg"}
 
@@ -91,7 +103,6 @@ def cleanup_large_files(folder_path: str):
             removed_mb += size_mb
         except Exception:
             pass
-
     print(f"[Cleanup] Freed {removed_mb:.1f} MB")
 
 

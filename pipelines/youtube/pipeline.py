@@ -222,7 +222,7 @@ def run_youtube_pipeline(
         notify_complete(run_id, user_id, metadata["title"], metadata.get("youtube_url", ""))
 
         # Step 10: Cleanup
-        cleanup_large_files(folder_path)
+        cleanup_large_files(folder_path, delete_all=True)
 
         log("\n✅ YouTube pipeline complete!")
         return {

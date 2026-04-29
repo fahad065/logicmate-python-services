@@ -255,7 +255,7 @@ def run_instagram_pipeline(
 
         # ── Step 10: Cleanup ───────────────────────────────────
         log("\n[Cleanup] Freeing disk space...")
-        cleanup_large_files(folder_path)
+        cleanup_large_files(folder_path, delete_all=True)
 
         log("\n[bold green]✅ Instagram Reel pipeline complete![/bold green]" if console
             else "\n✅ Instagram Reel pipeline complete!")
