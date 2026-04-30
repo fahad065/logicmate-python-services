@@ -9,45 +9,81 @@ from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
-from core.config import NESTJS_URL, ADMIN_EMAIL, ADMIN_PASSWORD
+
+
+def _get_nestjs_url() -> str:
+    return os.getenv("NESTJS_URL", "http://localhost:4000/api/v1")
 
 
 def _get_admin_token() -> str:
     """Get NestJS admin JWT token."""
+    nestjs_url = _get_nestjs_url()
+    admin_email    = os.getenv("ADMIN_EMAIL", "")
+    admin_password = os.getenv("ADMIN_PASSWORD", "")
+
+    print(f"  [YouTube] Logging in as admin: {admin_email[:20]}...", flush=True)
+    print(f"  [YouTube] NestJS URL: {nestjs_url}", flush=True)
+
+    if not admin_email or not admin_password:
+        raise Exception("ADMIN_EMAIL or ADMIN_PASSWORD env vars not set in Railway")
+
     try:
-        resp = http_requests.post(f"{NESTJS_URL}/auth/login", json={
-            "email": ADMIN_EMAIL,
-            "password": ADMIN_PASSWORD,
-        }, timeout=15)
-        return resp.json().get("accessToken", "")
+        resp = http_requests.post(
+            f"{nestjs_url}/auth/login",
+            json={"email": admin_email, "password": admin_password},
+            timeout=30,
+        )
+        print(f"  [YouTube] Login response status: {resp.status_code}", flush=True)
+
+        if resp.status_code != 200 and resp.status_code != 201:
+            raise Exception(f"Login failed ({resp.status_code}): {resp.text[:200]}")
+
+        data = resp.json()
+        token = data.get("accessToken") or data.get("access_token") or data.get("token")
+
+        if not token:
+            raise Exception(f"No token in login response: {list(data.keys())}")
+
+        print(f"  [YouTube] ✓ Admin token obtained", flush=True)
+        return token
+
     except Exception as e:
-        print(f"  [YouTube] Auth failed: {e}")
-        return ""
+        raise Exception(f"Failed to get admin token from NestJS: {e}")
 
 
 def _get_youtube_service(user_id: str):
     """Build authenticated YouTube service using tokens from NestJS."""
+    nestjs_url  = _get_nestjs_url()
     admin_token = _get_admin_token()
-    if not admin_token:
-        raise Exception("Failed to get admin token from NestJS")
 
-    # Fetch user's YouTube tokens from NestJS
+    print(f"  [YouTube] Fetching tokens for user {user_id[:8]}...", flush=True)
+
     resp = http_requests.get(
-        f"{NESTJS_URL}/auth/youtube/tokens/{user_id}",
+        f"{nestjs_url}/auth/youtube/tokens/{user_id}",
         headers={"Authorization": f"Bearer {admin_token}"},
-        timeout=15,
+        timeout=30,
     )
 
+    print(f"  [YouTube] Token fetch status: {resp.status_code}", flush=True)
+
     if resp.status_code != 200:
-        raise Exception(f"Failed to fetch YouTube tokens: {resp.text}")
+        raise Exception(
+            f"Failed to fetch YouTube tokens (status {resp.status_code}): {resp.text[:300]}"
+        )
 
     token_data = resp.json()
-    print(f"  [YouTube] Token data received for user {user_id[:8]}")
 
-    # Build Google credentials from stored tokens
+    access_token  = token_data.get("access_token")
+    refresh_token = token_data.get("refresh_token")
+
+    if not access_token:
+        raise Exception(f"No access_token in response. Keys: {list(token_data.keys())}")
+
+    print(f"  [YouTube] ✓ Tokens received for channel: {token_data.get('channel_title', 'unknown')}", flush=True)
+
     creds = Credentials(
-        token=token_data.get("access_token"),
-        refresh_token=token_data.get("refresh_token"),
+        token=access_token,
+        refresh_token=refresh_token,
         token_uri="https://oauth2.googleapis.com/token",
         client_id=os.getenv("GOOGLE_CLIENT_ID"),
         client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
@@ -59,7 +95,7 @@ def _get_youtube_service(user_id: str):
 
     # Refresh if expired
     if creds.expired and creds.refresh_token:
-        print(f"  [YouTube] Refreshing expired token...")
+        print(f"  [YouTube] Refreshing expired token...", flush=True)
         creds.refresh(Request())
 
     return build("youtube", "v3", credentials=creds)
@@ -67,7 +103,7 @@ def _get_youtube_service(user_id: str):
 
 def upload_to_youtube(
     video_path: str,
-    thumbnail_path: str,
+    thumbnail_path: str | None,
     title: str,
     description: str,
     tags: list,
@@ -76,7 +112,7 @@ def upload_to_youtube(
     privacy: str = "public",
 ) -> dict:
     """Upload main video to YouTube."""
-    print(f"  [YouTube] Uploading: {title[:50]}...")
+    print(f"  [YouTube] Uploading: {title[:50]}...", flush=True)
 
     youtube = _get_youtube_service(user_id)
 
@@ -115,9 +151,9 @@ def upload_to_youtube(
             if pct % 20 == 0:
                 print(f"  [YouTube] Upload progress: {pct}%", flush=True)
 
-    video_id = response["id"]
+    video_id  = response["id"]
     video_url = f"https://www.youtube.com/watch?v={video_id}"
-    print(f"  [YouTube] ✓ Uploaded: {video_url}")
+    print(f"  [YouTube] ✓ Uploaded: {video_url}", flush=True)
 
     # Set thumbnail
     if thumbnail_path and os.path.exists(thumbnail_path):
@@ -126,9 +162,9 @@ def upload_to_youtube(
                 videoId=video_id,
                 media_body=MediaFileUpload(thumbnail_path, mimetype="image/jpeg"),
             ).execute()
-            print(f"  [YouTube] ✓ Thumbnail set")
+            print(f"  [YouTube] ✓ Thumbnail set", flush=True)
         except Exception as e:
-            print(f"  [YouTube] Thumbnail upload failed (non-critical): {e}")
+            print(f"  [YouTube] Thumbnail upload failed (non-critical): {e}", flush=True)
 
     return {"id": video_id, "url": video_url}
 
@@ -142,14 +178,11 @@ def upload_short(
     privacy: str = "public",
 ) -> dict:
     """Upload a YouTube Short."""
-    short_title = f"{title[:90]} #Shorts"
-    short_desc  = f"{description}\n\n#Shorts #Short"
-
     return upload_to_youtube(
         video_path=video_path,
         thumbnail_path=None,
-        title=short_title,
-        description=short_desc,
+        title=f"{title[:90]} #Shorts",
+        description=f"{description}\n\n#Shorts #Short",
         tags=tags + ["Shorts", "Short"],
         user_id=user_id,
         privacy=privacy,
