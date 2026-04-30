@@ -66,19 +66,25 @@ def generate_thumbnail(
     }, timeout=30)
     resp.raise_for_status()
 
-    prediction_id = resp.json().get("id") or resp.json().get("prediction_id")
+    resp_json = resp.json()
+    prediction_id = (
+        resp_json.get("id") or
+        resp_json.get("prediction_id") or
+        resp_json.get("data", {}).get("id")
+    )
 
     # Poll
-    poll_url = POLL_BASE.format(id=prediction_id)
+    resp_data = resp.json().get("data", {})
+    poll_url = resp_data.get("urls", {}).get("get") or POLL_BASE.format(id=prediction_id)
     image_url = None
     for _ in range(30):
         time.sleep(8)
         poll = requests.get(poll_url, headers=headers, timeout=15)
         data = poll.json()
-        if data.get("status") == "succeeded":
-            output = data.get("output")
-            image_url = output[0] if isinstance(output, list) else output
-            break
+        inner = data.get("data", data)
+        if inner.get("status") in ("succeeded", "success", "completed"):
+            outputs = inner.get("outputs") or inner.get("output")
+            image_url = outputs[0] if isinstance(outputs, list) else outputs
         elif data.get("status") == "failed":
             raise Exception(f"Thumbnail generation failed: {data}")
 

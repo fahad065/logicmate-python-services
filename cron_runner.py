@@ -1,5 +1,5 @@
 """
-NexAgent Cron Runner
+LogicMate Cron Runner
 =====================
 Scheduled job runner — called by system cron or Railway cron.
 Finds active user modules and triggers their pipelines.

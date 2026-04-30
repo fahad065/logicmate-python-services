@@ -1,5 +1,5 @@
 """
-NexAgent Python Services — Main Entry Point
+LogicMate Python Services — Main Entry Point
 ============================================
 Handles pipeline execution requests from NestJS backend.
 Supports: youtube, instagram (more coming)

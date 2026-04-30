@@ -60,7 +60,7 @@ def run_youtube_pipeline(
 ) -> dict:
     """Main YouTube pipeline orchestrator."""
     log = console.print if console else print
-    log("\n━━━ NexAgent YouTube Agent Pipeline ━━━")
+    log("\n━━━ LogicMate YouTube Agent Pipeline ━━━")
 
     folder_path = None
     run_id = None

@@ -60,8 +60,8 @@ def run_instagram_pipeline(
     Returns result dict with status and reel URL.
     """
     log = console.print if console else print
-    log("\n[bold cyan]━━━ NexAgent Instagram Reels Pipeline ━━━[/bold cyan]" if console
-        else "\n━━━ NexAgent Instagram Reels Pipeline ━━━")
+    log("\n[bold cyan]━━━ LogicMate Instagram Reels Pipeline ━━━[/bold cyan]" if console
+        else "\n━━━ LogicMate Instagram Reels Pipeline ━━━")
 
     folder_path = None
     run_id = None
