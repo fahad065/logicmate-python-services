@@ -3,23 +3,15 @@ NexAgent Python Services — Main Entry Point
 ============================================
 Handles pipeline execution requests from NestJS backend.
 Supports: youtube, instagram (more coming)
-
-Run:
-    python main.py --pipeline youtube --user_id xxx --niche "dark psychology"
-    python main.py --pipeline instagram --user_id xxx --niche "fitness"
-
-Or via HTTP (FastAPI):
-    uvicorn main:app --port 8001
 """
 import os
 import sys
-import argparse
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from fastapi import FastAPI, HTTPException, Header
@@ -28,19 +20,19 @@ from typing import Optional
 
 app = FastAPI(title="LogicMate Pipeline Service", version="2.0.0")
 
-
 NESTJS_TOKEN = os.getenv("NESTJS_SERVICE_TOKEN", "")
+
+# Thread pool for background pipeline execution
+executor = ThreadPoolExecutor(max_workers=3)
 
 
 # ── Request models ────────────────────────────────────────────
 class PipelineRequest(BaseModel):
-    pipeline_type: str          # "youtube" | "instagram"
+    pipeline_type: str
     user_id: str
     niche: str
     user_module_id: Optional[str] = None
-    # YouTube specific
     youtube_channel_id: Optional[str] = None
-    # Instagram specific
     instagram_account_id: Optional[str] = None
     instagram_access_token: Optional[str] = None
 
@@ -54,70 +46,91 @@ class PipelineResponse(BaseModel):
 # ── Auth ──────────────────────────────────────────────────────
 def verify_token(authorization: str = Header(None)):
     if not NESTJS_TOKEN:
-        return True  # No token configured = skip auth (dev mode)
+        return True
     if not authorization or authorization != f"Bearer {NESTJS_TOKEN}":
         raise HTTPException(status_code=401, detail="Unauthorized")
     return True
 
 
-# ── Routes ────────────────────────────────────────────────────
+# ── Health ────────────────────────────────────────────────────
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "logicmate-pipelines", "version": "2.0.0"}
+    return {
+        "status": "ok",
+        "service": "logicmate-pipelines",
+        "version": "2.0.0"
+    }
 
 
+# ── Pipeline run — returns immediately, runs in background ────
 @app.post("/pipeline/run", response_model=PipelineResponse)
 async def run_pipeline(req: PipelineRequest, authorization: str = Header(None)):
     verify_token(authorization)
 
     print(f"\n[Main] Pipeline request: {req.pipeline_type} for user {req.user_id}")
 
-    if req.pipeline_type == "youtube":
-        from pipelines.youtube.pipeline import run_youtube_pipeline
-        result = run_youtube_pipeline(
-            user_id=req.user_id,
-            niche=req.niche,
-            youtube_channel_id=req.youtube_channel_id,
-            user_module_id=req.user_module_id,
+    # Validate pipeline type
+    if req.pipeline_type not in ["youtube", "instagram"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown pipeline: {req.pipeline_type}. Supported: youtube, instagram"
         )
 
-    elif req.pipeline_type == "instagram":
+    if req.pipeline_type == "instagram":
         if not req.instagram_account_id or not req.instagram_access_token:
             raise HTTPException(
                 status_code=400,
                 detail="instagram_account_id and instagram_access_token are required"
             )
-        from pipelines.instagram.pipeline import run_instagram_pipeline
-        result = run_instagram_pipeline(
-            user_id=req.user_id,
-            niche=req.niche,
-            instagram_account_id=req.instagram_account_id,
-            access_token=req.instagram_access_token,
-            user_module_id=req.user_module_id,
-        )
 
-    else:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unknown pipeline type: {req.pipeline_type}. Supported: youtube, instagram"
-        )
+    # Capture values for background thread
+    pipeline_type    = req.pipeline_type
+    user_id          = req.user_id
+    niche            = req.niche
+    user_module_id   = req.user_module_id
+    yt_channel_id    = req.youtube_channel_id
+    ig_account_id    = req.instagram_account_id
+    ig_access_token  = req.instagram_access_token
 
-    if result.get("status") == "success":
-        return PipelineResponse(
-            status="success",
-            message=f"{req.pipeline_type} pipeline completed",
-            data=result,
-        )
-    else:
-        raise HTTPException(
-            status_code=500,
-            detail=result.get("error", "Pipeline failed")
-        )
+    # Run in background thread — don't block the response
+    def run_in_background():
+        try:
+            if pipeline_type == "youtube":
+                from pipelines.youtube.pipeline import run_youtube_pipeline
+                result = run_youtube_pipeline(
+                    user_id=user_id,
+                    niche=niche,
+                    youtube_channel_id=yt_channel_id,
+                    user_module_id=user_module_id,
+                )
+            elif pipeline_type == "instagram":
+                from pipelines.instagram.pipeline import run_instagram_pipeline
+                result = run_instagram_pipeline(
+                    user_id=user_id,
+                    niche=niche,
+                    instagram_account_id=ig_account_id,
+                    access_token=ig_access_token,
+                    user_module_id=user_module_id,
+                )
+            print(f"[Main] Pipeline {pipeline_type} completed for user {user_id}: {result.get('status')}")
+        except Exception as e:
+            print(f"[Main] Pipeline {pipeline_type} error for user {user_id}: {e}")
+
+    # Submit to thread pool — returns immediately
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(executor, run_in_background)
+
+    # Return immediately to NestJS
+    return PipelineResponse(
+        status="started",
+        message=f"{pipeline_type} pipeline started in background",
+        data={"user_id": user_id, "pipeline_type": pipeline_type},
+    )
 
 
+# ── Pipeline status ───────────────────────────────────────────
 @app.get("/pipeline/status/{run_id}")
 def get_pipeline_status(run_id: str, authorization: str = Header(None)):
-    """Check status of a running pipeline."""
     verify_token(authorization)
     from core.config import OUTPUT_BASE
     import glob, json
@@ -143,7 +156,8 @@ def get_pipeline_status(run_id: str, authorization: str = Header(None)):
 
 # ── CLI mode ──────────────────────────────────────────────────
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="NexAgent Pipeline Runner")
+    import argparse
+    parser = argparse.ArgumentParser(description="LogicMate Pipeline Runner")
     parser.add_argument("--pipeline", required=True, choices=["youtube", "instagram"])
     parser.add_argument("--user_id", required=True)
     parser.add_argument("--niche", default=os.getenv("NICHE", "dark psychology"))
