@@ -66,35 +66,37 @@ def health():
 @app.post("/pipeline/run", response_model=PipelineResponse)
 async def run_pipeline(req: PipelineRequest, authorization: str = Header(None)):
     verify_token(authorization)
-
-    print(f"\n[Main] Pipeline request: {req.pipeline_type} for user {req.user_id}")
-
-    # Validate pipeline type
+ 
+    print(f"\n[Main] Pipeline request: {req.pipeline_type} for user {req.user_id}", flush=True)
+ 
     if req.pipeline_type not in ["youtube", "instagram"]:
         raise HTTPException(
             status_code=400,
             detail=f"Unknown pipeline: {req.pipeline_type}. Supported: youtube, instagram"
         )
-
+ 
     if req.pipeline_type == "instagram":
         if not req.instagram_account_id or not req.instagram_access_token:
             raise HTTPException(
                 status_code=400,
                 detail="instagram_account_id and instagram_access_token are required"
             )
-
-    # Capture values for background thread
-    pipeline_type    = req.pipeline_type
-    user_id          = req.user_id
-    niche            = req.niche
-    user_module_id   = req.user_module_id
-    yt_channel_id    = req.youtube_channel_id
-    ig_account_id    = req.instagram_account_id
-    ig_access_token  = req.instagram_access_token
-
-    # Run in background thread — don't block the response
+ 
+    # Capture all values before thread starts
+    pipeline_type   = req.pipeline_type
+    user_id         = req.user_id
+    niche           = req.niche
+    user_module_id  = req.user_module_id
+    yt_channel_id   = req.youtube_channel_id
+    ig_account_id   = req.instagram_account_id
+    ig_access_token = req.instagram_access_token
+ 
     def run_in_background():
+        import sys
         try:
+            print(f"[Background] ━━━ Starting {pipeline_type} pipeline for user {user_id} ━━━", flush=True)
+            sys.stdout.flush()
+ 
             if pipeline_type == "youtube":
                 from pipelines.youtube.pipeline import run_youtube_pipeline
                 result = run_youtube_pipeline(
@@ -103,6 +105,7 @@ async def run_pipeline(req: PipelineRequest, authorization: str = Header(None)):
                     youtube_channel_id=yt_channel_id,
                     user_module_id=user_module_id,
                 )
+ 
             elif pipeline_type == "instagram":
                 from pipelines.instagram.pipeline import run_instagram_pipeline
                 result = run_instagram_pipeline(
@@ -112,16 +115,22 @@ async def run_pipeline(req: PipelineRequest, authorization: str = Header(None)):
                     access_token=ig_access_token,
                     user_module_id=user_module_id,
                 )
-            print(f"[Main] Pipeline {pipeline_type} completed for user {user_id}: {result.get('status')}")
+ 
+            print(f"[Background] ✓ Pipeline completed: {result.get('status')}", flush=True)
+            sys.stdout.flush()
+ 
         except Exception as e:
-            print(f"[Main] Pipeline {pipeline_type} error for user {user_id}: {e}")
-
-    # Submit to thread pool — returns immediately
+            import traceback
+            print(f"[Background] ❌ Pipeline error: {e}", flush=True)
+            print(traceback.format_exc(), flush=True)
+            sys.stdout.flush()
+ 
+    # Start background thread
     import threading
     thread = threading.Thread(target=run_in_background, daemon=True)
     thread.start()
-
-    # Return immediately to NestJS
+    print(f"[Main] Background thread started for {pipeline_type}", flush=True)
+ 
     return PipelineResponse(
         status="started",
         message=f"{pipeline_type} pipeline started in background",
