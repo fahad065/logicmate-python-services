@@ -166,13 +166,22 @@ def run_youtube_pipeline(
         thumbnail_path = os.path.join(folder_path, "thumbnail.jpg")
         if not os.path.exists(thumbnail_path):
             log("\n[Step 6/9] Generating thumbnail...")
-            generate_thumbnail(
-                title=metadata["title"],
-                niche=niche,
-                output_path=thumbnail_path,
-            )
-            metadata["thumbnail"] = thumbnail_path
-            save_metadata(folder_path, metadata)
+            try:
+                generate_thumbnail(
+                    title=metadata["title"],
+                    niche=niche,
+                    output_path=thumbnail_path,
+                )
+                metadata["thumbnail"] = thumbnail_path
+                save_metadata(folder_path, metadata)
+                log(f"  ✓ Thumbnail generated")
+            except Exception as e:
+                log(f"  [Thumbnail] Failed (non-critical): {e} — continuing without thumbnail")
+                thumbnail_path = None
+                metadata["thumbnail"] = None
+                save_metadata(folder_path, metadata)
+        else:
+            log(f"  [Resume] Thumbnail exists")
 
         # Step 7: Shorts
         shorts_dir = os.path.join(folder_path, "shorts")

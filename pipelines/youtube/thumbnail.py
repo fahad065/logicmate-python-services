@@ -1,32 +1,20 @@
 """
-YouTube thumbnail generator using Atlas/Seedance image API + PIL text overlay.
-Cross-platform: works on macOS and Linux/Railway.
+YouTube thumbnail generator using DALL-E 3 + PIL text overlay.
+Switched from Atlas to DALL-E 3 for reliability.
 """
 import os
-import time
-import random
 import requests
-from io import BytesIO
-from core.config import ATLAS_API_KEY
+from openai import OpenAI
+from core.config import OPENAI_API_KEY
 
-GENERATE_URL = "https://api.atlascloud.ai/api/v1/model/generateImage"
-POLL_BASE    = "https://api.atlascloud.ai/api/v1/model/prediction/{id}"
-
-STYLES = [
-    {"bg": "dramatic dark cinematic background, deep shadows, professional studio lighting"},
-    {"bg": "abstract dark purple gradient, geometric patterns, modern minimalist"},
-    {"bg": "mysterious foggy atmosphere, dark moody lighting, cinematic look"},
-    {"bg": "bold high contrast black background, dramatic spotlight"},
-    {"bg": "dark urban environment, neon lights reflection, noir style"},
-    {"bg": "cosmic space background, stars and nebula, epic scale"},
-]
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 NICHE_PROMPTS = {
-    "psychology": "psychological thriller atmosphere, human silhouette, dramatic shadows",
-    "finance":    "financial charts, money, success visualization, corporate style",
-    "fitness":    "athletic achievement, dynamic motion, energy and power",
-    "marketing":  "brand identity, professional business, clean corporate design",
-    "education":  "knowledge and learning, books and light, academic achievement",
+    "psychology": "dark psychological atmosphere, human silhouette, dramatic shadows, noir style",
+    "finance":    "financial success visualization, money and charts, corporate professional",
+    "fitness":    "athletic achievement, dynamic energy, powerful motion blur",
+    "marketing":  "bold brand identity, clean professional design, modern corporate",
+    "education":  "knowledge and wisdom, books and light rays, academic achievement",
 }
 
 
@@ -35,131 +23,102 @@ def generate_thumbnail(
     niche: str,
     output_path: str,
 ) -> str:
-    """Generate YouTube thumbnail using Atlas image API."""
-    style = random.choice(STYLES)
+    """Generate YouTube thumbnail using DALL-E 3."""
 
     # Pick niche-specific prompt
-    niche_prompt = "cinematic dramatic background"
+    niche_prompt = "cinematic dramatic background, dark moody atmosphere"
     for key, prompt in NICHE_PROMPTS.items():
         if key in niche.lower():
             niche_prompt = prompt
             break
 
     prompt = (
-        f"YouTube thumbnail background. {niche_prompt}. "
-        f"{style['bg']}. "
-        f"16:9 aspect ratio. No text. No watermark. "
-        f"Professional, eye-catching, high contrast."
+        f"YouTube thumbnail background image. {niche_prompt}. "
+        f"16:9 aspect ratio, high contrast, eye-catching, professional. "
+        f"No text, no watermarks, no logos. Dark dramatic lighting."
     )
 
-    headers = {
-        "Authorization": f"Bearer {ATLAS_API_KEY}",
-        "Content-Type": "application/json",
-    }
+    print(f"  [Thumbnail] Generating with DALL-E 3...")
 
-    print(f"  [Thumbnail] Generating background image...")
-    resp = requests.post(GENERATE_URL, headers=headers, json={
-        "model": "black-forest-labs/FLUX.1-schnell",
-        "prompt": prompt,
-        "width": 1280,
-        "height": 720,
-    }, timeout=30)
-    resp.raise_for_status()
-
-    resp_json = resp.json()
-    prediction_id = (
-        resp_json.get("id") or
-        resp_json.get("prediction_id") or
-        resp_json.get("data", {}).get("id")
-    )
-
-    # Poll
-    resp_data = resp.json().get("data", {})
-    poll_url = resp_data.get("urls", {}).get("get") or POLL_BASE.format(id=prediction_id)
-    image_url = None
-    for _ in range(30):
-        time.sleep(8)
-        poll = requests.get(poll_url, headers=headers, timeout=15)
-        data = poll.json()
-        inner = data.get("data", data)
-        if inner.get("status") in ("succeeded", "success", "completed"):
-            outputs = inner.get("outputs") or inner.get("output")
-            image_url = outputs[0] if isinstance(outputs, list) else outputs
-        elif data.get("status") == "failed":
-            raise Exception(f"Thumbnail generation failed: {data}")
-
-    if not image_url:
-        raise Exception("Thumbnail timed out")
-
-    # Download image
-    img_resp = requests.get(image_url, timeout=30)
-    img_bytes = BytesIO(img_resp.content)
-
-    # Add text overlay using PIL if available, else save raw
     try:
-        from PIL import Image, ImageDraw, ImageFont, ImageEnhance
-        img = Image.open(img_bytes).convert("RGB")
-        img = _add_text_overlay(img, title)
-        img.save(output_path, "JPEG", quality=95)
-    except ImportError:
-        # PIL not available — save raw image
-        with open(output_path, "wb") as f:
-            f.write(img_resp.content)
-        print("  [Thumbnail] PIL not available, saved raw image")
+        resp = client.images.generate(
+            model="dall-e-3",
+            prompt=prompt,
+            size="1792x1024",  # closest to 16:9
+            quality="standard",
+            n=1,
+        )
+        image_url = resp.data[0].url
 
-    print(f"  [Thumbnail] ✓ Saved: {output_path}")
-    return output_path
+        # Download image
+        img_resp = requests.get(image_url, timeout=30)
+        img_resp.raise_for_status()
+
+        # Try to add text overlay with PIL
+        try:
+            from PIL import Image, ImageDraw
+            from io import BytesIO
+
+            img = Image.open(BytesIO(img_resp.content)).convert("RGB")
+            img = img.resize((1280, 720))
+            img = _add_text_overlay(img, title)
+            img.save(output_path, "JPEG", quality=95)
+        except ImportError:
+            # PIL not available — save raw
+            with open(output_path, "wb") as f:
+                f.write(img_resp.content)
+
+        print(f"  [Thumbnail] ✓ Saved: {output_path}")
+        return output_path
+
+    except Exception as e:
+        print(f"  [Thumbnail] DALL-E failed: {e} — creating placeholder")
+        return _create_placeholder(output_path)
 
 
 def _add_text_overlay(img, title: str):
-    """Add title text overlay to thumbnail image."""
-    from PIL import Image, ImageDraw, ImageFont, ImageEnhance
+    """Add title text to thumbnail."""
+    from PIL import Image, ImageDraw, ImageFont
 
-    draw = ImageDraw.Draw(img)
-    width, height = img.size
-
-    # Darken bottom area for text readability
+    # Darken bottom half
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    overlay_draw = ImageDraw.Draw(overlay)
-    overlay_draw.rectangle(
-        [0, height // 2, width, height],
-        fill=(0, 0, 0, 140)
-    )
+    draw_overlay = ImageDraw.Draw(overlay)
+    w, h = img.size
+    draw_overlay.rectangle([0, h // 2, w, h], fill=(0, 0, 0, 140))
     img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+
     draw = ImageDraw.Draw(img)
 
-    # Find font
-    font = _get_font(60)
-    font_small = _get_font(40)
+    # Get font
+    font = _get_font(52)
 
-    # Wrap title
+    # Wrap title to 2 lines
     words = title.split()
     lines = []
     current = []
     for word in words:
         current.append(word)
-        if len(" ".join(current)) > 25:
+        if len(" ".join(current)) > 28:
             lines.append(" ".join(current[:-1]))
             current = [word]
     if current:
         lines.append(" ".join(current))
+    lines = lines[:2]
 
-    # Draw text
-    y = height - (len(lines) * 70) - 40
-    for line in lines[:2]:
+    y = h - (len(lines) * 65) - 30
+    for line in lines:
         bbox = draw.textbbox((0, 0), line, font=font)
-        text_width = bbox[2] - bbox[0]
-        x = (width - text_width) // 2
+        text_w = bbox[2] - bbox[0]
+        x = (w - text_w) // 2
         # Shadow
-        draw.text((x+3, y+3), line, font=font, fill=(0, 0, 0, 200))
+        draw.text((x + 3, y + 3), line, font=font, fill=(0, 0, 0))
         draw.text((x, y), line, font=font, fill="white")
-        y += 70
+        y += 65
 
     return img
 
 
 def _get_font(size: int):
-    """Get font — try system fonts, fallback to default."""
     from PIL import ImageFont
     candidates = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -174,3 +133,18 @@ def _get_font(size: int):
             except Exception:
                 continue
     return ImageFont.load_default()
+
+
+def _create_placeholder(output_path: str) -> str:
+    """Create solid color placeholder thumbnail."""
+    try:
+        import subprocess
+        subprocess.run([
+            "ffmpeg", "-y", "-f", "lavfi",
+            "-i", "color=c=0x1a1a2e:size=1280x720:rate=1",
+            "-frames:v", "1", output_path
+        ], capture_output=True, check=True)
+    except Exception:
+        # Last resort — write empty file
+        open(output_path, 'wb').close()
+    return output_path
