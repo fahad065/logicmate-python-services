@@ -111,26 +111,26 @@ def generate_clip(
     poll_url = resp_data.get("urls", {}).get("get") or POLL_URL.format(prediction_id=prediction_id)    
 
     for attempt in range(40):  # 40 × 30sec = 20 min max
-    time.sleep(30)
-    poll = requests.get(poll_url, headers=headers, timeout=20)
-    data = poll.json()
-    inner = data.get("data", data)
-    status = inner.get("status", "")
+        time.sleep(30)
+        poll = requests.get(poll_url, headers=headers, timeout=20)
+        data = poll.json()
+        inner = data.get("data", data)
+        status = inner.get("status", "")
 
-    print(f"  [Seedance] Attempt {attempt+1}/40 status: {status}", flush=True)
+        print(f"  [Seedance] Attempt {attempt+1}/40 status: {status}", flush=True)
 
-    if status in ("succeeded", "success", "completed"):
-        outputs = inner.get("outputs")
-        if isinstance(outputs, list) and outputs:
-            video_url = outputs[0]
-        else:
-            video_url = inner.get("output") or inner.get("video_url")
-        break
-    elif status == "failed":
-        raise Exception(f"Seedance generation failed: {inner}")
+        if status in ("succeeded", "success", "completed"):
+            outputs = inner.get("outputs")
+            if isinstance(outputs, list) and outputs:
+                video_url = outputs[0]
+            else:
+                video_url = inner.get("output") or inner.get("video_url")
+            break
+        elif status == "failed":
+            raise Exception(f"Seedance generation failed: {inner}")
 
-    if attempt % 2 == 0:
-        print(f"  [Seedance] Waiting... attempt {attempt+1}/40", flush=True)
+        if attempt % 2 == 0:
+            print(f"  [Seedance] Waiting... attempt {attempt+1}/40", flush=True)
     else:
         raise Exception("Seedance timed out after 20 minutes")
 
