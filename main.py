@@ -117,8 +117,9 @@ async def run_pipeline(req: PipelineRequest, authorization: str = Header(None)):
             print(f"[Main] Pipeline {pipeline_type} error for user {user_id}: {e}")
 
     # Submit to thread pool — returns immediately
-    loop = asyncio.get_event_loop()
-    loop.run_in_executor(executor, run_in_background)
+    import threading
+    thread = threading.Thread(target=run_in_background, daemon=True)
+    thread.start()
 
     # Return immediately to NestJS
     return PipelineResponse(
