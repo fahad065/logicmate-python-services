@@ -108,27 +108,31 @@ def generate_clip(
 
     # Poll until complete
     resp_data = resp.json().get("data", {})
-    poll_url = resp_data.get("urls", {}).get("get") or POLL_URL.format(prediction_id=prediction_id)
-    
-    for attempt in range(60):
-        time.sleep(15)
-        poll = requests.get(poll_url, headers=headers, timeout=20)
-        data = poll.json()
-        inner = data.get("data", data)
-        status = inner.get("status", "")
-        if status == "succeeded":
-            outputs = inner.get("outputs")
-            video_url = outputs[0] if isinstance(outputs, list) and outputs else inner.get("output") or inner.get("video_url")
-            if isinstance(video_url, list):
-                video_url = video_url[0]
-            break
-        elif status == "failed":
-            raise Exception(f"Seedance generation failed: {data}")
+    poll_url = resp_data.get("urls", {}).get("get") or POLL_URL.format(prediction_id=prediction_id)    
 
-        if attempt % 4 == 0:
-            print(f"  [Seedance] Waiting... attempt {attempt+1}/60")
+    for attempt in range(40):  # 40 × 30sec = 20 min max
+    time.sleep(30)
+    poll = requests.get(poll_url, headers=headers, timeout=20)
+    data = poll.json()
+    inner = data.get("data", data)
+    status = inner.get("status", "")
+
+    print(f"  [Seedance] Attempt {attempt+1}/40 status: {status}", flush=True)
+
+    if status in ("succeeded", "success", "completed"):
+        outputs = inner.get("outputs")
+        if isinstance(outputs, list) and outputs:
+            video_url = outputs[0]
+        else:
+            video_url = inner.get("output") or inner.get("video_url")
+        break
+    elif status == "failed":
+        raise Exception(f"Seedance generation failed: {inner}")
+
+    if attempt % 2 == 0:
+        print(f"  [Seedance] Waiting... attempt {attempt+1}/40", flush=True)
     else:
-        raise Exception("Seedance timed out after 15 minutes")
+        raise Exception("Seedance timed out after 20 minutes")
 
     # Download
     if not output_path:
