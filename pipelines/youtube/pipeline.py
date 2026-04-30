@@ -183,17 +183,26 @@ def run_youtube_pipeline(
         else:
             log(f"  [Resume] Thumbnail exists")
 
-        # Step 7: Shorts
+        # Step 7: Shorts — optional, Railway may OOM on free tier
         shorts_dir = os.path.join(folder_path, "shorts")
         os.makedirs(shorts_dir, exist_ok=True)
         if not metadata.get("shorts"):
             log(f"\n[Step 7/9] Creating {NUM_SHORTS} Shorts...")
-            shorts = create_shorts(final_video, audio_path, shorts_dir, NUM_SHORTS)
-            metadata["shorts"] = shorts
-            metadata["status"] = "shorts_done"
-            save_metadata(folder_path, metadata)
-
-        # Step 8: Upload
+            try:
+                from pipelines.youtube.assembler import create_shorts
+                shorts = create_shorts(final_video, audio_path, shorts_dir, NUM_SHORTS)
+                metadata["shorts"] = shorts
+                metadata["status"] = "shorts_done"
+                save_metadata(folder_path, metadata)
+                log(f"  ✓ {len(shorts)} Shorts created")
+            except Exception as e:
+                log(f"  [Shorts] Failed (non-critical): {e} — continuing without Shorts")
+                metadata["shorts"] = []
+                save_metadata(folder_path, metadata)
+        else:
+            log(f"  [Resume] Shorts exist")
+ 
+        # Step 8: Upload to YouTube
         if not metadata.get("youtube_url"):
             log("\n[Step 8/9] Uploading to YouTube...")
             yt_result = upload_to_youtube(
@@ -202,13 +211,14 @@ def run_youtube_pipeline(
                 title=metadata["title"],
                 description=metadata["description"],
                 tags=metadata["tags"],
+                user_id=user_id,  # ← pass user_id
             )
             metadata["youtube_url"] = yt_result["url"]
             metadata["youtube_id"]  = yt_result["id"]
             metadata["status"]      = "uploaded"
             save_metadata(folder_path, metadata)
             log(f"  ✓ Uploaded: {yt_result['url']}")
-
+ 
             # Upload shorts
             for i, short_path in enumerate(metadata.get("shorts", [])):
                 try:
@@ -217,9 +227,11 @@ def run_youtube_pipeline(
                         title=f"{metadata['title']} #Shorts {i+1}",
                         description=metadata["description"][:500],
                         tags=metadata["tags"],
+                        user_id=user_id,  # ← pass user_id
                     )
+                    log(f"  ✓ Short {i+1} uploaded")
                 except Exception as e:
-                    log(f"  [Short {i+1}] Upload failed: {e}")
+                    log(f"  [Short {i+1}] Upload failed (non-critical): {e}")
 
         # Step 9: Notify
         if run_id:
