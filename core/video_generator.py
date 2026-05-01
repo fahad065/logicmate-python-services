@@ -1,6 +1,7 @@
 """
-Seedance video clip generator — shared across all pipelines.
-Supports both 16:9 (YouTube) and 9:16 (Reels/Shorts/TikTok).
+Atlas Cloud / Seedance video clip generator.
+Generates cinematic dark psychology scene clips.
+Model fallback chain for reliability.
 """
 import os
 import time
@@ -8,143 +9,155 @@ import random
 import requests
 from core.config import ATLAS_API_KEY
 
-GENERATE_URL = "https://api.atlascloud.ai/api/v1/model/generateVideo"
-POLL_URL     = "https://api.atlascloud.ai/api/v1/model/prediction/{prediction_id}"
+ATLAS_BASE    = "https://api.atlascloud.ai/api/v1"
+GENERATE_URL  = f"{ATLAS_BASE}/model/prediction"
+HEADERS       = {"Authorization": f"Bearer {ATLAS_API_KEY}", "Content-Type": "application/json"}
 
-# Scene category prompts — varied per video to avoid repetition
-SCENE_CATEGORIES = {
-    "cinematic": [
-        "cinematic dramatic close-up shot, shallow depth of field, professional lighting",
-        "aerial establishing shot, sweeping camera movement, golden hour lighting",
-        "slow motion reveal shot, dramatic lighting, high contrast",
-    ],
-    "urban": [
-        "modern city timelapse, busy streets, neon lights reflection",
-        "corporate office environment, professional setting, natural light",
-        "abstract geometric patterns, clean minimal background",
-    ],
-    "nature": [
-        "dramatic storm clouds forming over ocean, time-lapse",
-        "forest path with light rays, mystical atmosphere",
-        "mountain landscape, cinematic drone shot",
-    ],
-    "psychological": [
-        "dramatic shadow play on wall, noir lighting, mysterious atmosphere",
-        "close-up of human eye reflecting light, intense and focused",
-        "silhouette against bright window, contemplative mood",
-    ],
-    "abstract": [
-        "flowing liquid metal, abstract artistic, 4K",
-        "particle system exploding, energy burst, dark background",
-        "geometric shapes morphing, clean 3D animation style",
-    ],
-}
+# ── Text-to-video model fallback chain ───────────────────────
+VIDEO_MODELS = [
+    "bytedance/seedance-v1-5-pro/text-to-video",   # primary — best quality
+    "bytedance/seedance-v1-5-lite/text-to-video",  # fallback 1 — faster
+    "wan/wanx2-1-t2v-turbo/text-to-video",         # fallback 2
+]
+
+# ── Dark Psychology scene prompts ─────────────────────────────
+# Cinematic, action-oriented, no copyright issues
+DARK_PSYCH_SCENES = [
+    # Psychological tension
+    "extreme close-up of human eye dilating in darkness, intense psychological thriller atmosphere, 4K cinematic",
+    "silhouette of figure standing in dimly lit corridor, fog, dramatic shadows, noir film style, widescreen 16:9",
+    "dramatic overhead shot of chess pieces on dark board, one piece falling in slow motion, cinematic 4K",
+    "close-up of hands shuffling cards under spotlight, dark background, psychological thriller style",
+    "person sitting alone in dark room, single light beam from window, dust particles, cinematic depth",
+    "slow motion smoke forming human face shape, dark background, mysterious atmosphere, 4K",
+    "extreme close-up of mouth whispering, dark dramatic lighting, secrets and deception theme",
+    "surveillance camera POV of empty corridor, flickering lights, psychological horror atmosphere",
+    "broken mirror reflection showing distorted face, dark psychology theme, cinematic close-up",
+    "hourglass with dark sand falling, extreme close-up, dramatic lighting, time pressure",
+    "dramatic shot of puppet strings being cut, dark background, freedom from manipulation theme",
+    "close-up of brain scan glowing on dark screen, blue light, scientific thriller atmosphere",
+    # Action and tension
+    "fast cut montage of city lights at night, time-lapse, noir atmosphere, 4K widescreen",
+    "dramatic slow motion of dominoes falling in dark room, single spotlight, chain reaction",
+    "extreme close-up of lock being picked, hands in shadow, thriller atmosphere, 4K",
+    "dark water ripples in slow motion, single drop creating waves, psychological metaphor",
+    "person walking through crowd, everyone frozen in time, Matrix-style effect, cinematic",
+    "close-up of newspaper headlines spinning, dark dramatic lighting, revelation theme",
+    "dramatic low angle shot of skyscrapers at night, power and control theme, 4K",
+    "silhouette figure pulling strings above marionette crowd, dark control theme, cinematic",
+]
+
+ABSTRACT_SCENES = [
+    "particle system forming human brain shape, dark background, blue energy, 4K cinematic",
+    "geometric patterns morphing into maze, dark psychological thriller aesthetic, 4K",
+    "DNA helix spinning in darkness, glowing blue, scientific mystery atmosphere",
+    "neural network visualization, dark background, synapses firing in slow motion",
+    "binary code rain forming human face, dark Matrix-style, cinematic 4K",
+]
 
 
 def get_scene_prompts(niche: str, count: int, aspect_ratio: str = "16:9") -> list[str]:
-    """Generate varied scene prompts based on niche."""
-    niche_lower = niche.lower()
+    """Generate varied cinematic dark psychology scene prompts."""
+    suffix = "widescreen 16:9, no text overlay, no watermark, no logos, photorealistic"
 
-    if "psychology" in niche_lower or "behavior" in niche_lower or "dark" in niche_lower:
-        primary = "psychological"
-        secondary = "cinematic"
-    elif "finance" in niche_lower or "business" in niche_lower:
-        primary = "urban"
-        secondary = "cinematic"
-    elif "fitness" in niche_lower or "health" in niche_lower:
-        primary = "nature"
-        secondary = "cinematic"
-    else:
-        primary = "cinematic"
-        secondary = "abstract"
-
-    suffix = "vertical 9:16 format, mobile optimized" if aspect_ratio == "9:16" else "widescreen 16:9 cinematic"
-
-    prompts = []
-    all_prompts = SCENE_CATEGORIES[primary] + SCENE_CATEGORIES[secondary] + SCENE_CATEGORIES["abstract"]
+    # Mix dark psychology scenes with abstract
+    all_prompts = DARK_PSYCH_SCENES + ABSTRACT_SCENES
     random.shuffle(all_prompts)
 
+    prompts = []
     for i in range(count):
         base = all_prompts[i % len(all_prompts)]
-        prompts.append(f"{base}, {suffix}, no text overlay, no watermark")
+        prompts.append(f"{base}, {suffix}")
 
     return prompts
 
 
-def generate_clip(
-    prompt: str,
-    duration: int = 5,
-    output_path: str = None,
-    aspect_ratio: str = "16:9",
-    resolution: str = "720p",
-) -> str:
-    """Generate a single video clip via Seedance."""
-    headers = {
-        "Authorization": f"Bearer {ATLAS_API_KEY}",
-        "Content-Type": "application/json",
-    }
-
+def _generate_clip_with_model(model: str, prompt: str, duration: int) -> dict:
+    """Try to generate clip with specific model."""
     payload = {
-        "model": "bytedance/seedance-v1.5-pro/text-to-video",
-        "prompt": prompt,
-        "aspect_ratio": aspect_ratio,
-        "duration": duration,
-        "resolution": resolution,
-        "camera_fixed": False,
+        "model": model,
+        "input": {
+            "prompt": prompt,
+            "duration": duration,
+            "aspect_ratio": "16:9",
+            "resolution": "1080p",
+        }
     }
 
-    print(f"  [Seedance] Generating: {prompt[:60]}...")
-    resp = requests.post(GENERATE_URL, headers=headers, json=payload, timeout=30)
-    resp.raise_for_status()
+    resp = requests.post(GENERATE_URL, json=payload, headers=HEADERS, timeout=30)
+
+    if resp.status_code not in (200, 201):
+        raise Exception(f"API error {resp.status_code}: {resp.text[:200]}")
 
     resp_json = resp.json()
+    resp_data = resp_json.get("data", resp_json)
+
     prediction_id = (
+        resp_data.get("id") or
         resp_json.get("id") or
-        resp_json.get("prediction_id") or
-        resp_json.get("data", {}).get("id")  # ← Atlas wraps in "data"
+        resp_json.get("prediction_id")
     )
+
     if not prediction_id:
-        raise Exception(f"No prediction_id returned: {resp.text}")
+        raise Exception(f"No prediction_id returned: {resp.text[:200]}")
 
-    # Poll until complete
-    resp_data = resp.json().get("data", {})
-    poll_url = resp_data.get("urls", {}).get("get") or POLL_URL.format(prediction_id=prediction_id)    
+    poll_url = resp_data.get("urls", {}).get("get") or f"{ATLAS_BASE}/model/prediction/{prediction_id}"
 
-    for attempt in range(40):  # 40 × 30sec = 20 min max
+    return {"prediction_id": prediction_id, "poll_url": poll_url}
+
+
+def _poll_for_result(poll_url: str, max_attempts: int = 40) -> str:
+    """Poll until clip is ready. Returns video URL."""
+    for attempt in range(max_attempts):
         time.sleep(30)
-        poll = requests.get(poll_url, headers=headers, timeout=20)
+        poll = requests.get(poll_url, headers=HEADERS, timeout=20)
         data = poll.json()
         inner = data.get("data", data)
         status = inner.get("status", "")
 
-        print(f"  [Seedance] Attempt {attempt+1}/40 status: {status}", flush=True)
+        print(f"  [Seedance] Attempt {attempt+1}/{max_attempts} status: {status}", flush=True)
 
         if status in ("succeeded", "success", "completed"):
             outputs = inner.get("outputs")
             if isinstance(outputs, list) and outputs:
-                video_url = outputs[0]
-            else:
-                video_url = inner.get("output") or inner.get("video_url")
-            break
+                return outputs[0]
+            video_url = inner.get("output") or inner.get("video_url")
+            if video_url:
+                return video_url
+            raise Exception(f"No video URL in response: {inner}")
+
         elif status == "failed":
-            raise Exception(f"Seedance generation failed: {inner}")
+            raise Exception(f"Generation failed: {inner.get('error', 'unknown')}")
 
         if attempt % 2 == 0:
-            print(f"  [Seedance] Waiting... attempt {attempt+1}/40", flush=True)
-    else:
-        raise Exception("Seedance timed out after 20 minutes")
+            print(f"  [Seedance] Waiting... attempt {attempt+1}/{max_attempts}", flush=True)
 
-    # Download
-    if not output_path:
-        output_path = f"/tmp/clip_{prediction_id}.mp4"
+    raise Exception(f"Timed out after {max_attempts * 30 / 60:.0f} minutes")
 
-    vid_resp = requests.get(video_url, timeout=120)
-    vid_resp.raise_for_status()
-    with open(output_path, "wb") as f:
-        f.write(vid_resp.content)
 
-    print(f"  [Seedance] ✓ Saved to {output_path}")
-    return output_path
+def generate_clip(prompt: str, output_path: str, duration: int = 5) -> str:
+    """Generate single clip with model fallback chain."""
+
+    for model in VIDEO_MODELS:
+        try:
+            print(f"  [Seedance] Generating with {model.split('/')[1]}...", flush=True)
+            result = _generate_clip_with_model(model, prompt, duration)
+            video_url = _poll_for_result(result["poll_url"])
+
+            # Download clip
+            video_resp = requests.get(video_url, timeout=120)
+            video_resp.raise_for_status()
+            with open(output_path, "wb") as f:
+                f.write(video_resp.content)
+
+            print(f"  [Seedance] ✓ Saved to {output_path}", flush=True)
+            return output_path
+
+        except Exception as e:
+            print(f"  [Seedance] {model} failed: {e} — trying next model...", flush=True)
+            continue
+
+    raise Exception(f"All video models failed for prompt: {prompt[:50]}")
 
 
 def generate_clips_batch(
@@ -153,18 +166,26 @@ def generate_clips_batch(
     aspect_ratio: str = "16:9",
     duration: int = 5,
 ) -> list[str]:
-    """Generate multiple clips sequentially."""
-    paths = []
+    """Generate multiple clips sequentially with fallback."""
+    os.makedirs(output_dir, exist_ok=True)
+    clips = []
+
     for i, prompt in enumerate(prompts):
+        short_prompt = prompt[:80] + "..." if len(prompt) > 80 else prompt
+        print(f"  [Seedance] Generating: {short_prompt}", flush=True)
+
         output_path = os.path.join(output_dir, f"clip_{i:03d}.mp4")
+
+        # Skip if already exists (resume support)
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
+            print(f"  [Seedance] ✓ Resuming — clip {i} already exists", flush=True)
+            clips.append(output_path)
+            continue
+
         try:
-            path = generate_clip(
-                prompt=prompt,
-                duration=duration,
-                output_path=output_path,
-                aspect_ratio=aspect_ratio,
-            )
-            paths.append(path)
+            clip = generate_clip(prompt, output_path, duration)
+            clips.append(clip)
         except Exception as e:
-            print(f"  [Seedance] Clip {i} failed: {e} — skipping")
-    return paths
+            print(f"  [Seedance] Clip {i} failed all models: {e} — skipping", flush=True)
+
+    return clips

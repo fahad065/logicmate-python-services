@@ -1,47 +1,46 @@
 """
 OpenAI TTS audio generator — shared across all pipelines.
-Replaces macOS `say` command for cross-platform compatibility (Railway/Linux).
+Uses bold, dramatic voices for dark psychology content.
 """
 import os
 import re
-import random
 import subprocess
 from openai import OpenAI
-from core.config import OPENAI_API_KEY, IS_MACOS
+from core.config import OPENAI_API_KEY
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# EQ audio profiles for variety
+# Bold dramatic profiles — dark psychology niche
 AUDIO_PROFILES = [
     {
-        "name": "deep_authoritative",
-        "speed": 0.95,
+        "name": "bold_dramatic",
+        "speed": 0.92,
         "voice": "onyx",
-        "description": "Slower, deeper — authoritative",
+        "description": "Deep, bold, dramatic — perfect for dark content",
     },
     {
-        "name": "crisp_direct",
-        "speed": 1.0,
-        "voice": "nova",
-        "description": "Normal pace, crisp and clear",
+        "name": "intense_authoritative",
+        "speed": 0.95,
+        "voice": "echo",
+        "description": "Intense, authoritative, commanding",
     },
     {
-        "name": "measured_calm",
-        "speed": 0.9,
-        "voice": "alloy",
-        "description": "Calm, measured delivery",
+        "name": "mysterious_deep",
+        "speed": 0.90,
+        "voice": "fable",
+        "description": "Mysterious, deep, storytelling",
     },
-    {
-        "name": "energetic",
-        "speed": 1.05,
-        "voice": "shimmer",
-        "description": "Slightly faster, energetic",
-    },
+]
+
+# TTS model fallback chain
+TTS_MODELS = [
+    "tts-1-hd",   # primary — best quality
+    "tts-1",      # fallback — faster, slightly lower quality
 ]
 
 
 def get_profile(folder_path: str) -> dict:
-    """Pick a consistent profile based on folder path hash."""
+    """Pick consistent bold profile based on folder path hash."""
     idx = hash(folder_path) % len(AUDIO_PROFILES)
     return AUDIO_PROFILES[idx]
 
@@ -52,6 +51,7 @@ def clean_script(text: str) -> str:
     text = re.sub(r'\*(.+?)\*', r'\1', text)
     text = re.sub(r'#+\s', '', text)
     text = re.sub(r'\[.*?\]', '', text)
+    text = re.sub(r'\(.*?\)', '', text)
     return text.strip()
 
 
@@ -61,42 +61,49 @@ def generate_voiceover(
     folder_path: str = "",
     target_duration: int = 180,
 ) -> str:
-    """
-    Generate voiceover using OpenAI TTS.
-    Works on both macOS and Linux (Railway).
-    """
+    """Generate bold dramatic voiceover using OpenAI TTS with fallback."""
     profile = get_profile(folder_path)
     cleaned = clean_script(script)
 
-    print(f"  [TTS] Generating voiceover ({profile['name']}, voice={profile['voice']})...")
+    print(f"  [TTS] Generating voiceover ({profile['name']}, voice={profile['voice']})...", flush=True)
 
-    # OpenAI TTS — works on all platforms
-    response = client.audio.speech.create(
-        model="tts-1-hd",
-        voice=profile["voice"],
-        input=cleaned,
-        speed=profile["speed"],
-    )
+    # Try each TTS model in order
+    response = None
+    for model in TTS_MODELS:
+        try:
+            response = client.audio.speech.create(
+                model=model,
+                voice=profile["voice"],
+                input=cleaned,
+                speed=profile["speed"],
+            )
+            print(f"  [TTS] Using model: {model}", flush=True)
+            break
+        except Exception as e:
+            print(f"  [TTS] {model} failed: {e} — trying next...", flush=True)
+
+    if not response:
+        raise Exception("All TTS models failed")
 
     # Save raw mp3
     raw_path = output_path.replace(".mp3", "_raw.mp3")
     with open(raw_path, "wb") as f:
         f.write(response.content)
 
-    # Apply FFmpeg EQ enhancement
+    # Apply FFmpeg audio enhancement — boost bass for dramatic effect
     try:
         subprocess.run([
             "ffmpeg", "-y", "-i", raw_path,
-            "-af", "bass=g=2:f=100:w=50,loudnorm",
+            "-af", "bass=g=4:f=80:w=50,treble=g=2:f=8000,loudnorm=I=-14:LRA=7:TP=-2",
             "-ar", "44100",
+            "-b:a", "192k",
             output_path
         ], capture_output=True, check=True)
         os.remove(raw_path)
     except Exception:
-        # Fallback: use raw file if FFmpeg fails
         os.rename(raw_path, output_path)
 
-    print(f"  [TTS] ✓ Voiceover saved: {output_path}")
+    print(f"  [TTS] ✓ Voiceover saved: {output_path}", flush=True)
     return output_path
 
 

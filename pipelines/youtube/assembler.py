@@ -85,18 +85,19 @@ def create_shorts(
 
         try:
             subprocess.run([
-                "ffmpeg", "-y",
-                "-ss", str(start_time),
-                "-i", main_video_path,
-                "-i", audio_path,
-                "-map", "0:v:0", "-map", "1:a:0",
-                "-ss", str(start_time),
-                "-t", str(short_duration),
-                "-vf", "crop=ih*9/16:ih,scale=1080:1920",
-                "-c:v", "libx264", "-preset", "fast",
-                "-c:a", "aac", "-b:a", "128k",
-                output_path,
-            ], check=True, capture_output=True)
+                'ffmpeg', '-y', '-ss', str(start),
+                '-i', video_path,
+                '-i', audio_path,
+                '-map', '0:v:0', '-map', '1:a:0',
+                '-t', str(duration),
+                '-vf', 'crop=ih*9/16:ih,scale=720:1280',
+                '-c:v', 'libx264', '-preset', 'ultrafast',
+                '-crf', '28',
+                '-b:v', '800k',
+                '-c:a', 'aac', '-b:a', '96k',
+                '-threads', '1',
+                output_path
+            ], check=True, timeout=120)
             shorts.append(output_path)
             print(f"[Assembler] ✓ Short {i+1} created")
         except Exception as e:
