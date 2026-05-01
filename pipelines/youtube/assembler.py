@@ -3,6 +3,7 @@ FFmpeg video assembler — YouTube long-form video.
 Stitches video clips + audio into final MP4.
 """
 import os
+import json
 import subprocess
 
 
@@ -12,11 +13,8 @@ def assemble_video(
     output_path: str,
     target_duration: int = 180,
 ) -> str:
-    """
-    Assemble video clips + audio into final long-form video using FFmpeg.
-    More reliable than MoviePy for this use case.
-    """
-    print(f"\n[Assembler] Assembling {len(clip_paths)} clips...")
+    """Assemble video clips + audio into final long-form video using FFmpeg."""
+    print(f"\n[Assembler] Assembling {len(clip_paths)} clips...", flush=True)
 
     if not clip_paths:
         raise Exception("No clips to assemble")
@@ -51,7 +49,7 @@ def assemble_video(
     if os.path.exists(concat_file):
         os.remove(concat_file)
 
-    print(f"[Assembler] ✓ Final video: {output_path}")
+    print(f"[Assembler] ✓ Final video: {output_path}", flush=True)
     return output_path
 
 
@@ -61,15 +59,11 @@ def create_shorts(
     output_dir: str,
     num_shorts: int = 3,
 ) -> list[str]:
-    """
-    Cut vertical 9:16 Shorts from the main horizontal video.
-    Each short is 45-58 seconds from different parts of the video.
-    """
+    """Cut vertical 9:16 Shorts from the main horizontal video."""
     os.makedirs(output_dir, exist_ok=True)
     shorts = []
 
     # Get video duration
-    import json
     result = subprocess.run([
         "ffprobe", "-v", "quiet", "-print_format", "json",
         "-show_format", main_video_path
@@ -85,22 +79,24 @@ def create_shorts(
 
         try:
             subprocess.run([
-                'ffmpeg', '-y', '-ss', str(start),
-                '-i', video_path,
-                '-i', audio_path,
-                '-map', '0:v:0', '-map', '1:a:0',
-                '-t', str(duration),
-                '-vf', 'crop=ih*9/16:ih,scale=720:1280',
-                '-c:v', 'libx264', '-preset', 'ultrafast',
-                '-crf', '28',
-                '-b:v', '800k',
-                '-c:a', 'aac', '-b:a', '96k',
-                '-threads', '1',
+                "ffmpeg", "-y",
+                "-ss", str(start_time),
+                "-i", main_video_path,
+                "-i", audio_path,
+                "-map", "0:v:0", "-map", "1:a:0",
+                "-ss", str(start_time),
+                "-t", str(short_duration),
+                "-vf", "crop=ih*9/16:ih,scale=720:1280",  # lower res to prevent OOM
+                "-c:v", "libx264", "-preset", "ultrafast",  # ultrafast to prevent SIGKILL
+                "-crf", "28",
+                "-b:v", "800k",
+                "-c:a", "aac", "-b:a", "96k",
+                "-threads", "1",  # single thread to reduce memory
                 output_path
-            ], check=True, timeout=120)
+            ], check=True, capture_output=True, timeout=120)
             shorts.append(output_path)
-            print(f"[Assembler] ✓ Short {i+1} created")
+            print(f"[Assembler] ✓ Short {i+1} created", flush=True)
         except Exception as e:
-            print(f"[Assembler] Short {i+1} failed: {e}")
+            print(f"[Assembler] Short {i+1} failed: {e}", flush=True)
 
     return shorts
