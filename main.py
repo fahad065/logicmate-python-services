@@ -35,6 +35,8 @@ class PipelineRequest(BaseModel):
     youtube_channel_id: Optional[str] = None
     instagram_account_id: Optional[str] = None
     instagram_access_token: Optional[str] = None
+    custom_prompt: Optional[str] = None      # ← ADD
+    use_custom_prompt: bool = False           # ← ADD
 
 
 class PipelineResponse(BaseModel):

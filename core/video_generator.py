@@ -189,3 +189,41 @@ def generate_clips_batch(
             print(f"  [Seedance] Clip {i} failed all models: {e} — skipping", flush=True)
 
     return clips
+
+def expand_custom_prompt(custom_prompt: str, count: int) -> list[str]:
+    """Expand user's custom scene description into multiple cinematic variations."""
+    from openai import OpenAI
+    from core.config import OPENAI_API_KEY
+    import json
+ 
+    client = OpenAI(api_key=OPENAI_API_KEY)
+    suffix = "widescreen 16:9, cinematic, no text overlay, no watermark, photorealistic"
+ 
+    try:
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{
+                "role": "user",
+                "content": f"""Create {count} cinematic video clip descriptions based on this concept:
+                "{custom_prompt}"
+                
+                Requirements:
+                - Each should be a distinct camera angle or moment from the concept
+                - Cinematic, detailed, visual
+                - No text overlays, no watermarks
+                - 16:9 widescreen
+                
+                Return ONLY valid JSON: {{"prompts": ["description 1", "description 2", ...]}}"""
+            }],
+            response_format={"type": "json_object"},
+            temperature=0.8,
+        )
+        data = json.loads(resp.choices[0].message.content)
+        prompts = data.get("prompts", [])
+        # Ensure we have enough prompts
+        while len(prompts) < count:
+            prompts.extend(prompts)
+        return [f"{p}, {suffix}" for p in prompts[:count]]
+    except Exception as e:
+        print(f"  [Custom Prompt] Failed to expand: {e} — using default scenes", flush=True)
+        return get_scene_prompts(custom_prompt, count)

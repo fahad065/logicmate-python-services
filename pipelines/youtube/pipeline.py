@@ -56,6 +56,8 @@ def run_youtube_pipeline(
     niche: str,
     youtube_channel_id: str = None,
     user_module_id: str = None,
+    custom_prompt: str = None,       # ← ADD THIS
+    use_custom_prompt: bool = False,  # ← ADD THIS
     console=None,
 ) -> dict:
     """Main YouTube pipeline orchestrator."""
@@ -140,7 +142,11 @@ def run_youtube_pipeline(
 
         if len(existing_clips) < NUM_CLIPS:
             log(f"\n[Step 4/9] Generating {NUM_CLIPS} video clips...")
-            prompts = get_scene_prompts(niche, NUM_CLIPS, aspect_ratio="16:9")
+            if use_custom_prompt and custom_prompt:
+                # Expand user's custom description into 12 varied cinematic prompts
+                prompts = expand_custom_prompt(custom_prompt, NUM_CLIPS)
+            else:
+                prompts = get_scene_prompts(niche, NUM_CLIPS, aspect_ratio="16:9")
             clips = generate_clips_batch(
                 prompts=prompts,
                 output_dir=clips_dir,
