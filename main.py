@@ -37,6 +37,7 @@ class PipelineRequest(BaseModel):
     instagram_access_token: Optional[str] = None
     custom_prompt: Optional[str] = None      # ← ADD
     use_custom_prompt: bool = False           # ← ADD
+    run_id: Optional[str] = None              # ← ADD
 
 
 class PipelineResponse(BaseModel):
@@ -106,6 +107,9 @@ async def run_pipeline(req: PipelineRequest, authorization: str = Header(None)):
                     niche=niche,
                     youtube_channel_id=yt_channel_id,
                     user_module_id=user_module_id,
+                    run_id=req.run_id,          # ← add
+                    custom_prompt=req.custom_prompt,     # ← add
+                    use_custom_prompt=req.use_custom_prompt,  # ← add
                 )
  
             elif pipeline_type == "instagram":
@@ -181,9 +185,13 @@ if __name__ == "__main__":
     if args.pipeline == "youtube":
         from pipelines.youtube.pipeline import run_youtube_pipeline
         result = run_youtube_pipeline(
-            user_id=args.user_id,
-            niche=args.niche,
-            user_module_id=args.user_module_id or None,
+            user_id=user_id,
+            niche=niche,
+            youtube_channel_id=yt_channel_id,
+            user_module_id=user_module_id,
+            run_id=req.run_id,          # ← add
+            custom_prompt=req.custom_prompt,     # ← add
+            use_custom_prompt=req.use_custom_prompt,  # ← add
         )
     elif args.pipeline == "instagram":
         from pipelines.instagram.pipeline import run_instagram_pipeline
