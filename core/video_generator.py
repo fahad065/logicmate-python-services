@@ -1,7 +1,6 @@
 """
-Atlas Cloud / Seedance video clip generator.
-Generates cinematic dark psychology scene clips.
-Model fallback chain for reliability.
+Atlas Cloud video clip generator.
+Uses Wan 2.6 as primary (cheap) with Seedance 2.0 Fast as fallback.
 """
 import os
 import time
@@ -9,22 +8,19 @@ import random
 import requests
 from core.config import ATLAS_API_KEY
 
-ATLAS_BASE    = "https://api.atlascloud.ai/api/v1"
-GENERATE_URL  = f"{ATLAS_BASE}/model/generateVideo"
-HEADERS       = {"Authorization": f"Bearer {ATLAS_API_KEY}", "Content-Type": "application/json"}
+ATLAS_BASE   = "https://api.atlascloud.ai/api/v1"
+GENERATE_URL = f"{ATLAS_BASE}/model/generateVideo"
+HEADERS      = {"Authorization": f"Bearer {ATLAS_API_KEY}", "Content-Type": "application/json"}
 
-# ── Text-to-video model fallback chain ───────────────────────
+# ── Model fallback chain — cheapest first ────────────────────
 VIDEO_MODELS = [
-    "alibaba/wan-2.6/text-to-video", 
-    "bytedance/seedance-2.0/text-to-video",
-    "bytedance/seedance-2.0-fast/text-to-video", 
-    "alibaba/happyhorse-1.0/text-to-video",       
+    "alibaba/wan-2.6/text-to-video",              # primary — ~$0.07/clip
+    "bytedance/seedance-2.0-fast/text-to-video",  # fallback — ~$0.78/clip
+    "alibaba/happyhorse-1.0/text-to-video",       # last resort
 ]
 
 # ── Dark Psychology scene prompts ─────────────────────────────
-# Cinematic, action-oriented, no copyright issues
 DARK_PSYCH_SCENES = [
-    # Psychological tension
     "extreme close-up of human eye dilating in darkness, intense psychological thriller atmosphere, 4K cinematic",
     "silhouette of figure standing in dimly lit corridor, fog, dramatic shadows, noir film style, widescreen 16:9",
     "dramatic overhead shot of chess pieces on dark board, one piece falling in slow motion, cinematic 4K",
@@ -37,15 +33,14 @@ DARK_PSYCH_SCENES = [
     "hourglass with dark sand falling, extreme close-up, dramatic lighting, time pressure",
     "dramatic shot of puppet strings being cut, dark background, freedom from manipulation theme",
     "close-up of brain scan glowing on dark screen, blue light, scientific thriller atmosphere",
-    # Action and tension
     "fast cut montage of city lights at night, time-lapse, noir atmosphere, 4K widescreen",
     "dramatic slow motion of dominoes falling in dark room, single spotlight, chain reaction",
     "extreme close-up of lock being picked, hands in shadow, thriller atmosphere, 4K",
     "dark water ripples in slow motion, single drop creating waves, psychological metaphor",
-    "person walking through crowd, everyone frozen in time, Matrix-style effect, cinematic",
     "close-up of newspaper headlines spinning, dark dramatic lighting, revelation theme",
     "dramatic low angle shot of skyscrapers at night, power and control theme, 4K",
     "silhouette figure pulling strings above marionette crowd, dark control theme, cinematic",
+    "person walking through crowd, everyone frozen in time, Matrix-style effect, cinematic",
 ]
 
 ABSTRACT_SCENES = [
@@ -58,29 +53,19 @@ ABSTRACT_SCENES = [
 
 
 def get_scene_prompts(niche: str, count: int, aspect_ratio: str = "16:9") -> list[str]:
-    """Generate varied cinematic dark psychology scene prompts."""
     suffix = "widescreen 16:9, no text overlay, no watermark, no logos, photorealistic"
-
-    # Mix dark psychology scenes with abstract
     all_prompts = DARK_PSYCH_SCENES + ABSTRACT_SCENES
     random.shuffle(all_prompts)
-
-    prompts = []
-    for i in range(count):
-        base = all_prompts[i % len(all_prompts)]
-        prompts.append(f"{base}, {suffix}")
-
-    return prompts
+    return [f"{all_prompts[i % len(all_prompts)]}, {suffix}" for i in range(count)]
 
 
 def _generate_clip_with_model(model: str, prompt: str, duration: int) -> dict:
-    """Try to generate clip with specific model."""
     payload = {
         "model": model,
-        "prompt": prompt,        # ← top level, not nested in "input"
+        "prompt": prompt,
         "width": 1280,
         "height": 720,
-        "duration": 3,   # ← reduce from 5 to 3 seconds
+        "duration": duration,
         "fps": 24,
     }
 
@@ -95,20 +80,20 @@ def _generate_clip_with_model(model: str, prompt: str, duration: int) -> dict:
     if not prediction_id:
         raise Exception(f"No prediction_id returned: {resp.text[:200]}")
 
-    poll_url = f"https://api.atlascloud.ai/api/v1/model/prediction/{prediction_id}"
-
+    poll_url = f"{ATLAS_BASE}/model/prediction/{prediction_id}"
     return {"prediction_id": prediction_id, "poll_url": poll_url}
 
 
 def _poll_for_result(poll_url: str, max_attempts: int = 40) -> str:
     for attempt in range(max_attempts):
-        time.sleep(30)
+        time.sleep(15)  # 15 sec intervals — faster polling
         poll = requests.get(poll_url, headers=HEADERS, timeout=20)
         data = poll.json()
         inner = data.get("data", data)
         status = inner.get("status", "")
 
-        print(f"  [Seedance] Attempt {attempt+1}/{max_attempts} status: {status}", flush=True)
+        if attempt % 2 == 0:
+            print(f"  [Seedance] Attempt {attempt+1}/{max_attempts} status: {status}", flush=True)
 
         if status in ("succeeded", "success", "completed"):
             outputs = inner.get("outputs")
@@ -122,22 +107,16 @@ def _poll_for_result(poll_url: str, max_attempts: int = 40) -> str:
         elif status == "failed":
             raise Exception(f"Generation failed: {inner.get('error', 'unknown')}")
 
-        if attempt % 2 == 0:
-            print(f"  [Seedance] Waiting... attempt {attempt+1}/{max_attempts}", flush=True)
-
-    raise Exception(f"Timed out after {max_attempts * 30 / 60:.0f} minutes")
+    raise Exception(f"Timed out after {max_attempts * 15 / 60:.0f} minutes")
 
 
-def generate_clip(prompt: str, output_path: str, duration: int = 5) -> str:
-    """Generate single clip with model fallback chain."""
-
+def generate_clip(prompt: str, output_path: str, duration: int = 3) -> str:
     for model in VIDEO_MODELS:
         try:
             print(f"  [Seedance] Generating with {model.split('/')[1]}...", flush=True)
             result = _generate_clip_with_model(model, prompt, duration)
             video_url = _poll_for_result(result["poll_url"])
 
-            # Download clip
             video_resp = requests.get(video_url, timeout=120)
             video_resp.raise_for_status()
             with open(output_path, "wb") as f:
@@ -157,9 +136,8 @@ def generate_clips_batch(
     prompts: list[str],
     output_dir: str,
     aspect_ratio: str = "16:9",
-    duration: int = 5,
+    duration: int = 3,
 ) -> list[str]:
-    """Generate multiple clips sequentially with fallback."""
     os.makedirs(output_dir, exist_ok=True)
     clips = []
 
@@ -169,7 +147,6 @@ def generate_clips_batch(
 
         output_path = os.path.join(output_dir, f"clip_{i:03d}.mp4")
 
-        # Skip if already exists (resume support)
         if os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
             print(f"  [Seedance] ✓ Resuming — clip {i} already exists", flush=True)
             clips.append(output_path)
@@ -183,40 +160,31 @@ def generate_clips_batch(
 
     return clips
 
+
 def expand_custom_prompt(custom_prompt: str, count: int) -> list[str]:
-    """Expand user's custom scene description into multiple cinematic variations."""
     from openai import OpenAI
     from core.config import OPENAI_API_KEY
     import json
- 
+
     client = OpenAI(api_key=OPENAI_API_KEY)
     suffix = "widescreen 16:9, cinematic, no text overlay, no watermark, photorealistic"
- 
+
     try:
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[{
-                "role": "user",
-                "content": f"""Create {count} cinematic video clip descriptions based on this concept:
-                "{custom_prompt}"
-                
-                Requirements:
-                - Each should be a distinct camera angle or moment from the concept
-                - Cinematic, detailed, visual
-                - No text overlays, no watermarks
-                - 16:9 widescreen
-                
-                Return ONLY valid JSON: {{"prompts": ["description 1", "description 2", ...]}}"""
-            }],
+            messages=[{"role": "user", "content": f"""Create {count} cinematic video clip descriptions based on:
+"{custom_prompt}"
+
+Requirements: distinct camera angles, cinematic, no text, 16:9 widescreen.
+Return ONLY valid JSON: {{"prompts": ["description 1", ...]}}"""}],
             response_format={"type": "json_object"},
             temperature=0.8,
         )
         data = json.loads(resp.choices[0].message.content)
         prompts = data.get("prompts", [])
-        # Ensure we have enough prompts
         while len(prompts) < count:
             prompts.extend(prompts)
         return [f"{p}, {suffix}" for p in prompts[:count]]
     except Exception as e:
-        print(f"  [Custom Prompt] Failed to expand: {e} — using default scenes", flush=True)
+        print(f"  [Custom Prompt] Failed: {e} — using default scenes", flush=True)
         return get_scene_prompts(custom_prompt, count)
