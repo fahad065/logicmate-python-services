@@ -13,42 +13,49 @@ def assemble_video(
     output_path: str,
     target_duration: int = 180,
 ) -> str:
-    """Assemble video clips + audio into final long-form video using FFmpeg."""
+    """Assemble video clips + audio — memory optimized for Railway."""
     print(f"\n[Assembler] Assembling {len(clip_paths)} clips...", flush=True)
-
+ 
     if not clip_paths:
         raise Exception("No clips to assemble")
-
+ 
     clips_dir = os.path.dirname(clip_paths[0])
     concat_file = os.path.join(clips_dir, "concat_list.txt")
-
+ 
     # Loop clips to fill target duration
     total_clip_duration = len(clip_paths) * 5
     clip_list = clip_paths[:]
     while total_clip_duration < target_duration + 5:
         clip_list.extend(clip_paths)
         total_clip_duration += len(clip_paths) * 5
-
+ 
     with open(concat_file, "w") as f:
         for clip_path in clip_list:
             f.write(f"file '{clip_path}'\n")
-
+ 
+    # Memory-optimized FFmpeg — ultrafast preset, single thread, lower bitrate
     subprocess.run([
         "ffmpeg", "-y",
         "-f", "concat", "-safe", "0",
         "-i", concat_file,
         "-i", audio_path,
         "-map", "0:v:0", "-map", "1:a:0",
-        "-c:v", "libx264", "-preset", "fast",
-        "-c:a", "aac", "-b:a", "192k",
+        "-c:v", "libx264",
+        "-preset", "ultrafast",   # ← prevent OOM SIGKILL
+        "-crf", "28",             # ← lower quality = less memory
+        "-b:v", "800k",           # ← cap video bitrate
+        "-vf", "scale=1280:720",  # ← ensure consistent resolution
+        "-c:a", "aac",
+        "-b:a", "128k",           # ← reduce audio
+        "-threads", "1",          # ← single thread = less RAM
         "-t", str(target_duration),
         "-shortest",
         output_path,
-    ], check=True, capture_output=True)
-
+    ], check=True, capture_output=True, timeout=300)
+ 
     if os.path.exists(concat_file):
         os.remove(concat_file)
-
+ 
     print(f"[Assembler] ✓ Final video: {output_path}", flush=True)
     return output_path
 

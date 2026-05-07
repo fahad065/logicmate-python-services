@@ -1,6 +1,6 @@
 """
 Atlas Cloud video clip generator.
-Uses Wan 2.6 as primary (cheap) with Seedance 2.0 Fast as fallback.
+Uses Wan 2.6 as primary with short duration to minimize cost.
 """
 import os
 import time
@@ -14,8 +14,8 @@ HEADERS      = {"Authorization": f"Bearer {ATLAS_API_KEY}", "Content-Type": "app
 
 # ── Model fallback chain — cheapest first ────────────────────
 VIDEO_MODELS = [
-    "alibaba/wan-2.6/text-to-video",              # primary — ~$0.07/clip
-    "bytedance/seedance-2.0-fast/text-to-video",  # fallback — ~$0.78/clip
+    "alibaba/wan-2.6/text-to-video",              # primary — ~$0.07/3sec clip
+    "bytedance/seedance-2.0-fast/text-to-video",  # fallback
     "alibaba/happyhorse-1.0/text-to-video",       # last resort
 ]
 
@@ -60,12 +60,15 @@ def get_scene_prompts(niche: str, count: int, aspect_ratio: str = "16:9") -> lis
 
 
 def _generate_clip_with_model(model: str, prompt: str, duration: int) -> dict:
+    # Use 3 seconds — minimum for most models, lowest cost
+    actual_duration = min(duration, 3)
+
     payload = {
         "model": model,
         "prompt": prompt,
-        "width": 1280,
-        "height": 720,
-        "duration": duration,
+        "width": 854,            # 480p width — cheaper than 1280
+        "height": 480,           # 480p — still looks fine for YouTube
+        "duration": actual_duration,
         "fps": 24,
     }
 
@@ -78,7 +81,7 @@ def _generate_clip_with_model(model: str, prompt: str, duration: int) -> dict:
     prediction_id = resp_json.get("data", {}).get("id") or resp_json.get("id")
 
     if not prediction_id:
-        raise Exception(f"No prediction_id returned: {resp.text[:200]}")
+        raise Exception(f"No prediction_id: {resp.text[:200]}")
 
     poll_url = f"{ATLAS_BASE}/model/prediction/{prediction_id}"
     return {"prediction_id": prediction_id, "poll_url": poll_url}
@@ -86,7 +89,7 @@ def _generate_clip_with_model(model: str, prompt: str, duration: int) -> dict:
 
 def _poll_for_result(poll_url: str, max_attempts: int = 40) -> str:
     for attempt in range(max_attempts):
-        time.sleep(15)  # 15 sec intervals — faster polling
+        time.sleep(15)
         poll = requests.get(poll_url, headers=HEADERS, timeout=20)
         data = poll.json()
         inner = data.get("data", data)
@@ -103,7 +106,6 @@ def _poll_for_result(poll_url: str, max_attempts: int = 40) -> str:
             if video_url:
                 return video_url
             raise Exception(f"No video URL in response: {inner}")
-
         elif status == "failed":
             raise Exception(f"Generation failed: {inner.get('error', 'unknown')}")
 
@@ -124,9 +126,8 @@ def generate_clip(prompt: str, output_path: str, duration: int = 3) -> str:
 
             print(f"  [Seedance] ✓ Saved to {output_path}", flush=True)
             return output_path
-
         except Exception as e:
-            print(f"  [Seedance] {model} failed: {e} — trying next model...", flush=True)
+            print(f"  [Seedance] {model} failed: {e} — trying next...", flush=True)
             continue
 
     raise Exception(f"All video models failed for prompt: {prompt[:50]}")
@@ -174,7 +175,6 @@ def expand_custom_prompt(custom_prompt: str, count: int) -> list[str]:
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": f"""Create {count} cinematic video clip descriptions based on:
 "{custom_prompt}"
-
 Requirements: distinct camera angles, cinematic, no text, 16:9 widescreen.
 Return ONLY valid JSON: {{"prompts": ["description 1", ...]}}"""}],
             response_format={"type": "json_object"},
