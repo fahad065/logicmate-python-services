@@ -38,8 +38,8 @@ try:
 except ImportError as e:
     print(f"[Warning] YouTube module import failed: {e}")
 
-NUM_CLIPS       = 12
-CLIP_DURATION   = 5
+NUM_CLIPS       = 8   # ← reduce from 12 to 8
+CLIP_DURATION   = 3   # ← reduce from 5 to 3
 TARGET_DURATION = 180
 
 

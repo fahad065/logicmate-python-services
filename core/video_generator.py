@@ -15,10 +15,10 @@ HEADERS       = {"Authorization": f"Bearer {ATLAS_API_KEY}", "Content-Type": "ap
 
 # ── Text-to-video model fallback chain ───────────────────────
 VIDEO_MODELS = [
-    "bytedance/seedance-2.0-fast/text-to-video",   # primary — fast + cheap ($0.022/sec)
-    "bytedance/seedance-2.0/text-to-video",         # fallback 1
-    "alibaba/wan-2.6/text-to-video",                # fallback 2
-    "alibaba/happyhorse-1.0/text-to-video",         # fallback 3
+    "alibaba/wan-2.6/text-to-video", 
+    "bytedance/seedance-2.0/text-to-video",
+    "bytedance/seedance-2.0-fast/text-to-video", 
+    "alibaba/happyhorse-1.0/text-to-video",       
 ]
 
 # ── Dark Psychology scene prompts ─────────────────────────────
@@ -80,7 +80,7 @@ def _generate_clip_with_model(model: str, prompt: str, duration: int) -> dict:
         "prompt": prompt,        # ← top level, not nested in "input"
         "width": 1280,
         "height": 720,
-        "duration": duration,
+        "duration": 3,   # ← reduce from 5 to 3 seconds
         "fps": 24,
     }
 
