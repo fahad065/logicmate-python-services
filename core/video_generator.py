@@ -10,14 +10,15 @@ import requests
 from core.config import ATLAS_API_KEY
 
 ATLAS_BASE    = "https://api.atlascloud.ai/api/v1"
-GENERATE_URL  = f"{ATLAS_BASE}/model/prediction"
+GENERATE_URL  = f"{ATLAS_BASE}/model/generateVideo"
 HEADERS       = {"Authorization": f"Bearer {ATLAS_API_KEY}", "Content-Type": "application/json"}
 
 # ── Text-to-video model fallback chain ───────────────────────
 VIDEO_MODELS = [
-    "bytedance/seedance-v1-5-pro/text-to-video",   # primary — best quality
-    "bytedance/seedance-v1-5-lite/text-to-video",  # fallback 1 — faster
-    "wan/wanx2-1-t2v-turbo/text-to-video",         # fallback 2
+    "bytedance/seedance-2.0-fast/text-to-video",   # primary — fast + cheap ($0.022/sec)
+    "bytedance/seedance-2.0/text-to-video",         # fallback 1
+    "alibaba/wan-2.6/text-to-video",                # fallback 2
+    "alibaba/happyhorse-1.0/text-to-video",         # fallback 3
 ]
 
 # ── Dark Psychology scene prompts ─────────────────────────────
@@ -90,24 +91,21 @@ def _generate_clip_with_model(model: str, prompt: str, duration: int) -> dict:
         raise Exception(f"API error {resp.status_code}: {resp.text[:200]}")
 
     resp_json = resp.json()
-    resp_data = resp_json.get("data", resp_json)
-
     prediction_id = (
-        resp_data.get("id") or
         resp_json.get("id") or
-        resp_json.get("prediction_id")
+        resp_json.get("data", {}).get("id")
     )
 
     if not prediction_id:
         raise Exception(f"No prediction_id returned: {resp.text[:200]}")
 
-    poll_url = resp_data.get("urls", {}).get("get") or f"{ATLAS_BASE}/model/prediction/{prediction_id}"
+    poll_url = f"https://api.atlascloud.ai/api/v1/model/prediction/{prediction_id}"
+
 
     return {"prediction_id": prediction_id, "poll_url": poll_url}
 
 
 def _poll_for_result(poll_url: str, max_attempts: int = 40) -> str:
-    """Poll until clip is ready. Returns video URL."""
     for attempt in range(max_attempts):
         time.sleep(30)
         poll = requests.get(poll_url, headers=HEADERS, timeout=20)
