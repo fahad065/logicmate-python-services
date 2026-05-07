@@ -77,12 +77,11 @@ def _generate_clip_with_model(model: str, prompt: str, duration: int) -> dict:
     """Try to generate clip with specific model."""
     payload = {
         "model": model,
-        "input": {
-            "prompt": prompt,
-            "duration": duration,
-            "aspect_ratio": "16:9",
-            "resolution": "1080p",
-        }
+        "prompt": prompt,        # ← top level, not nested in "input"
+        "width": 1280,
+        "height": 720,
+        "duration": duration,
+        "fps": 24,
     }
 
     resp = requests.post(GENERATE_URL, json=payload, headers=HEADERS, timeout=30)
@@ -91,16 +90,12 @@ def _generate_clip_with_model(model: str, prompt: str, duration: int) -> dict:
         raise Exception(f"API error {resp.status_code}: {resp.text[:200]}")
 
     resp_json = resp.json()
-    prediction_id = (
-        resp_json.get("id") or
-        resp_json.get("data", {}).get("id")
-    )
+    prediction_id = resp_json.get("data", {}).get("id") or resp_json.get("id")
 
     if not prediction_id:
         raise Exception(f"No prediction_id returned: {resp.text[:200]}")
 
     poll_url = f"https://api.atlascloud.ai/api/v1/model/prediction/{prediction_id}"
-
 
     return {"prediction_id": prediction_id, "poll_url": poll_url}
 
