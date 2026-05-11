@@ -25,6 +25,7 @@ from core.nestjs_client import (
     fail_pipeline_run,
     notify_complete,
     notify_failed,
+    append_log,
 )
 from core.utils import (
     create_run_folder, find_resumable_folder,
@@ -38,8 +39,8 @@ try:
 except ImportError as e:
     print(f"[Warning] YouTube module import failed: {e}")
 
-NUM_CLIPS       = 8   # ← reduce from 12 to 8
-CLIP_DURATION   = 3   # ← reduce from 5 to 3
+NUM_CLIPS       = 8
+CLIP_DURATION   = 3
 TARGET_DURATION = 180
 
 
@@ -51,6 +52,7 @@ def run_youtube_pipeline(
     run_id: str = None,
     custom_prompt: str = None,
     use_custom_prompt: bool = False,
+    video_model: str = "auto",
     console=None,
 ) -> dict:
     """Main YouTube pipeline orchestrator."""
@@ -58,7 +60,6 @@ def run_youtube_pipeline(
     log("\n━━━ LogicMate YouTube Agent Pipeline ━━━")
 
     folder_path = None
-    # NOTE: do NOT override run_id here — use the one passed in from NestJS
 
     try:
         # Check for resumable run
@@ -78,15 +79,24 @@ def run_youtube_pipeline(
             }
             save_metadata(folder_path, metadata)
 
+        append_log(run_id, f"━━━ YouTube Pipeline Started ━━━")
+        append_log(run_id, f"Niche: {niche}")
+        append_log(run_id, f"Model: {video_model}")
+
         # ── Step 1 & 2: Topic + Script ────────────────────────
         if not metadata.get("title"):
             log("\n[Step 1/9] Researching topics...")
+            append_log(run_id, "[Step 1/9] Researching trending topics...")
             update_pipeline_step(run_id, 1, "Researching topics")
+
             topics = generate_topic_ideas(niche, count=3, format_type="youtube")
             topic = topics[0] if topics else f"The dark truth about {niche}"
+            append_log(run_id, f"  Topic selected: {topic}")
 
             log(f"\n[Step 2/9] Writing script for: {topic}")
-            update_pipeline_step(run_id, 2, f"Writing script: {topic[:50]}")
+            append_log(run_id, f"[Step 2/9] Writing script: {topic[:60]}")
+            update_pipeline_step(run_id, 2, "Writing script")
+
             script_data = generate_youtube_script(niche, topic)
             metadata.update({
                 "title":          script_data["title"],
@@ -97,13 +107,17 @@ def run_youtube_pipeline(
                 "status":         "script_done",
             })
             save_metadata(folder_path, metadata)
+            append_log(run_id, f"  ✓ Script: {len(metadata['script'].split())} words")
+            append_log(run_id, f"  Title: {metadata['title']}")
             log(f"  ✓ Script: {len(metadata['script'].split())} words")
 
         # ── Step 3: Voiceover ─────────────────────────────────
         audio_path = os.path.join(folder_path, "voiceover.mp3")
         if not os.path.exists(audio_path):
             log("\n[Step 3/9] Generating voiceover...")
+            append_log(run_id, "[Step 3/9] Generating voiceover...")
             update_pipeline_step(run_id, 3, "Generating voiceover")
+
             generate_voiceover(
                 script=metadata["script"],
                 output_path=audio_path,
@@ -116,6 +130,7 @@ def run_youtube_pipeline(
 
         audio_duration  = get_audio_duration(audio_path)
         actual_duration = int(audio_duration) + 2
+        append_log(run_id, f"  ✓ Voiceover ready ({int(audio_duration)}s)")
 
         # ── Step 4: Video clips ───────────────────────────────
         clips_dir = os.path.join(folder_path, "clips")
@@ -127,10 +142,12 @@ def run_youtube_pipeline(
 
         if len(existing_clips) < NUM_CLIPS:
             log(f"\n[Step 4/9] Generating {NUM_CLIPS} video clips...")
+            append_log(run_id, f"[Step 4/9] Generating {NUM_CLIPS} video clips (model: {video_model})...")
             update_pipeline_step(run_id, 4, f"Generating {NUM_CLIPS} video clips")
 
             if use_custom_prompt and custom_prompt:
                 prompts = expand_custom_prompt(custom_prompt, NUM_CLIPS)
+                append_log(run_id, f"  Using custom scene description")
             else:
                 prompts = get_scene_prompts(niche, NUM_CLIPS, aspect_ratio="16:9")
 
@@ -139,28 +156,35 @@ def run_youtube_pipeline(
                 output_dir=clips_dir,
                 aspect_ratio="16:9",
                 duration=CLIP_DURATION,
+                preferred_model=video_model,
             )
             metadata["clips"]  = clips
             metadata["status"] = "clips_done"
             save_metadata(folder_path, metadata)
+            append_log(run_id, f"  ✓ {len(clips)} clips generated")
         else:
             clips = existing_clips
+            append_log(run_id, f"  [Resume] {len(clips)} clips already exist")
             log(f"  [Resume] {len(clips)} clips already exist")
 
         # ── Step 5: Assemble ──────────────────────────────────
         final_video = os.path.join(folder_path, "final_video.mp4")
         if not os.path.exists(final_video):
             log("\n[Step 5/9] Assembling video...")
+            append_log(run_id, "[Step 5/9] Assembling final video...")
             update_pipeline_step(run_id, 5, "Assembling video")
+
             assemble_video(clips, audio_path, final_video, actual_duration)
             metadata["final_video"] = final_video
             metadata["status"]      = "assembled"
             save_metadata(folder_path, metadata)
+            append_log(run_id, "  ✓ Video assembled")
 
         # ── Step 6: Thumbnail ─────────────────────────────────
         thumbnail_path = os.path.join(folder_path, "thumbnail.jpg")
         if not os.path.exists(thumbnail_path):
             log("\n[Step 6/9] Generating thumbnail...")
+            append_log(run_id, "[Step 6/9] Generating thumbnail...")
             update_pipeline_step(run_id, 6, "Generating thumbnail")
             try:
                 generate_thumbnail(
@@ -170,13 +194,16 @@ def run_youtube_pipeline(
                 )
                 metadata["thumbnail"] = thumbnail_path
                 save_metadata(folder_path, metadata)
+                append_log(run_id, "  ✓ Thumbnail generated")
                 log("  ✓ Thumbnail generated")
             except Exception as e:
                 log(f"  [Thumbnail] Failed (non-critical): {e}")
+                append_log(run_id, f"  [Thumbnail] Failed (non-critical): {e}")
                 thumbnail_path = None
                 metadata["thumbnail"] = None
                 save_metadata(folder_path, metadata)
         else:
+            append_log(run_id, "  [Resume] Thumbnail exists")
             log("  [Resume] Thumbnail exists")
 
         # ── Step 7: Shorts ────────────────────────────────────
@@ -184,24 +211,30 @@ def run_youtube_pipeline(
         os.makedirs(shorts_dir, exist_ok=True)
         if not metadata.get("shorts"):
             log(f"\n[Step 7/9] Creating {NUM_SHORTS} Shorts...")
+            append_log(run_id, f"[Step 7/9] Creating {NUM_SHORTS} Shorts...")
             update_pipeline_step(run_id, 7, "Creating Shorts")
             try:
                 shorts = create_shorts(final_video, audio_path, shorts_dir, NUM_SHORTS)
                 metadata["shorts"] = shorts
                 metadata["status"] = "shorts_done"
                 save_metadata(folder_path, metadata)
+                append_log(run_id, f"  ✓ {len(shorts)} Shorts created")
                 log(f"  ✓ {len(shorts)} Shorts created")
             except Exception as e:
                 log(f"  [Shorts] Failed (non-critical): {e}")
+                append_log(run_id, f"  [Shorts] Failed (non-critical): {e}")
                 metadata["shorts"] = []
                 save_metadata(folder_path, metadata)
         else:
+            append_log(run_id, "  [Resume] Shorts exist")
             log("  [Resume] Shorts exist")
 
         # ── Step 8: Upload ────────────────────────────────────
         if not metadata.get("youtube_url"):
             log("\n[Step 8/9] Uploading to YouTube...")
+            append_log(run_id, "[Step 8/9] Uploading to YouTube...")
             update_pipeline_step(run_id, 8, "Uploading to YouTube")
+
             yt_result = upload_to_youtube(
                 video_path=final_video,
                 thumbnail_path=thumbnail_path,
@@ -214,6 +247,7 @@ def run_youtube_pipeline(
             metadata["youtube_id"]  = yt_result["id"]
             metadata["status"]      = "uploaded"
             save_metadata(folder_path, metadata)
+            append_log(run_id, f"  ✓ Uploaded: {yt_result['url']}")
             log(f"  ✓ Uploaded: {yt_result['url']}")
 
             # Upload shorts
@@ -226,17 +260,21 @@ def run_youtube_pipeline(
                         tags=metadata["tags"],
                         user_id=user_id,
                     )
+                    append_log(run_id, f"  ✓ Short {i+1} uploaded")
                     log(f"  ✓ Short {i+1} uploaded")
                 except Exception as e:
                     log(f"  [Short {i+1}] Upload failed (non-critical): {e}")
+                    append_log(run_id, f"  [Short {i+1}] Upload failed: {e}")
 
         # ── Step 9: Notify + Complete ─────────────────────────
         log("\n[Step 9/9] Notifying...")
+        append_log(run_id, "[Step 9/9] Pipeline complete! 🎉")
+
         complete_pipeline_run(
             run_id=run_id,
             youtube_url=metadata.get("youtube_url", ""),
             title=metadata.get("title", ""),
-            cost=1.32,
+            cost=round(0.35 * NUM_CLIPS + 0.31, 2),
         )
         notify_complete(run_id, user_id, metadata["title"], metadata.get("youtube_url", ""))
 
@@ -253,6 +291,8 @@ def run_youtube_pipeline(
     except Exception as e:
         error_msg = str(e)
         log(f"\n❌ Pipeline failed: {error_msg}")
+        append_log(run_id, f"❌ Pipeline failed: {error_msg}")
+
         if folder_path:
             try:
                 metadata = load_metadata(folder_path)
@@ -261,6 +301,7 @@ def run_youtube_pipeline(
                 save_metadata(folder_path, metadata)
             except Exception:
                 pass
+
         fail_pipeline_run(run_id, error_msg)
         notify_failed(run_id, user_id, error_msg)
         return {"status": "failed", "error": error_msg}

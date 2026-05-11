@@ -38,6 +38,8 @@ class PipelineRequest(BaseModel):
     custom_prompt: Optional[str] = None      # ← ADD
     use_custom_prompt: bool = False           # ← ADD
     run_id: Optional[str] = None              # ← ADD
+    video_model: Optional[str] = "auto"   # ← add
+
 
 
 class PipelineResponse(BaseModel):
@@ -110,6 +112,7 @@ async def run_pipeline(req: PipelineRequest, authorization: str = Header(None)):
                     run_id=req.run_id,          # ← add
                     custom_prompt=req.custom_prompt,     # ← add
                     use_custom_prompt=req.use_custom_prompt,  # ← add
+                    video_model=req.video_model,   # ← add
                 )
  
             elif pipeline_type == "instagram":

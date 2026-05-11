@@ -1,6 +1,5 @@
 """
-NestJS API client — shared across all pipelines.
-Handles auth, pipeline run updates, notifications.
+NestJS API client — handles auth, pipeline run updates, log streaming.
 """
 import os
 import requests
@@ -9,7 +8,6 @@ NESTJS_URL     = os.getenv("NESTJS_URL", "http://localhost:4000/api/v1")
 ADMIN_EMAIL    = os.getenv("ADMIN_EMAIL", "")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 
-# Cache token to avoid re-login on every call
 _cached_token = None
 
 
@@ -38,14 +36,34 @@ def get_auth_headers() -> dict:
         return {}
 
 
+def append_log(run_id: str, message: str) -> None:
+    """Store log line in pipeline-runs DB collection."""
+    if not run_id:
+        return
+    try:
+        headers = get_auth_headers()
+        if not headers:
+            return
+        requests.patch(
+            f"{NESTJS_URL}/pipeline-runs/{run_id}/log",
+            json={"message": message},
+            headers=headers,
+            timeout=8,
+        )
+    except Exception:
+        pass  # Never block pipeline for log failure
+
+
 def update_pipeline_step(run_id: str, step: int, label: str = "") -> bool:
-    """Update pipeline step progress."""
+    """Update pipeline step progress in DB."""
     if not run_id:
         return False
     try:
         headers = get_auth_headers()
         if not headers:
             return False
+        msg = f"[Step {step}/9] {label}"
+        append_log(run_id, msg)
         resp = requests.patch(
             f"{NESTJS_URL}/pipeline-runs/{run_id}/status",
             json={"status": "running", "currentStep": step, "stepLabel": label},
@@ -66,6 +84,7 @@ def complete_pipeline_run(run_id: str, youtube_url: str = "", title: str = "", c
         headers = get_auth_headers()
         if not headers:
             return False
+        append_log(run_id, f"✅ Pipeline complete! Video: {youtube_url}")
         resp = requests.patch(
             f"{NESTJS_URL}/pipeline-runs/{run_id}/status",
             json={
@@ -92,13 +111,13 @@ def fail_pipeline_run(run_id: str, error: str) -> bool:
         headers = get_auth_headers()
         if not headers:
             return False
+        append_log(run_id, f"❌ Pipeline failed: {error[:300]}")
         resp = requests.patch(
             f"{NESTJS_URL}/pipeline-runs/{run_id}/status",
             json={"status": "failed", "errorMessage": error[:500]},
             headers=headers,
             timeout=10,
         )
-        print(f"[NestJS] ✓ Run marked failed", flush=True)
         return resp.status_code < 300
     except Exception as e:
         print(f"[NestJS] Fail error: {e}", flush=True)
@@ -120,7 +139,6 @@ def notify_complete(run_id: str, user_id: str, title: str, url: str):
                 "message": f'"{title}" is now live on YouTube.',
                 "actionUrl": url,
                 "icon": "✅",
-                "sendEmail": True,
             },
             headers=headers,
             timeout=10,
@@ -145,7 +163,6 @@ def notify_failed(run_id: str, user_id: str, error: str):
                 "message": f"Error: {error[:200]}. Please try again.",
                 "actionUrl": "/dashboard/pipeline-logs",
                 "icon": "❌",
-                "sendEmail": True,
             },
             headers=headers,
             timeout=10,

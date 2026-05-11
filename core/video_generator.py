@@ -1,6 +1,7 @@
 """
 Atlas Cloud video clip generator.
-Uses Wan 2.6 as primary with short duration to minimize cost.
+Wan 2.6 as primary (cheapest), Seedance 2.0 Fast as fallback.
+Supports preferred_model selection from frontend.
 """
 import os
 import time
@@ -12,10 +13,10 @@ ATLAS_BASE   = "https://api.atlascloud.ai/api/v1"
 GENERATE_URL = f"{ATLAS_BASE}/model/generateVideo"
 HEADERS      = {"Authorization": f"Bearer {ATLAS_API_KEY}", "Content-Type": "application/json"}
 
-# ── Model fallback chain — cheapest first ────────────────────
+# ── Default model fallback chain — cheapest first ────────────
 VIDEO_MODELS = [
-    "alibaba/wan-2.6/text-to-video",              # primary — ~$0.07/3sec clip
-    "bytedance/seedance-2.0-fast/text-to-video",  # fallback
+    "alibaba/wan-2.6/text-to-video",              # primary — ~$0.35/clip
+    "bytedance/seedance-2.0-fast/text-to-video",  # fallback — ~$0.78/clip
     "alibaba/happyhorse-1.0/text-to-video",       # last resort
 ]
 
@@ -53,6 +54,7 @@ ABSTRACT_SCENES = [
 
 
 def get_scene_prompts(niche: str, count: int, aspect_ratio: str = "16:9") -> list[str]:
+    """Generate varied cinematic dark psychology scene prompts."""
     suffix = "widescreen 16:9, no text overlay, no watermark, no logos, photorealistic"
     all_prompts = DARK_PSYCH_SCENES + ABSTRACT_SCENES
     random.shuffle(all_prompts)
@@ -60,15 +62,13 @@ def get_scene_prompts(niche: str, count: int, aspect_ratio: str = "16:9") -> lis
 
 
 def _generate_clip_with_model(model: str, prompt: str, duration: int) -> dict:
-    # Use 3 seconds — minimum for most models, lowest cost
-    actual_duration = min(duration, 3)
-
+    """Try to generate clip with specific model."""
     payload = {
         "model": model,
         "prompt": prompt,
-        "width": 854,            # 480p width — cheaper than 1280
-        "height": 480,           # 480p — still looks fine for YouTube
-        "duration": actual_duration,
+        "width": 854,
+        "height": 480,
+        "duration": min(duration, 3),  # cap at 3s to control cost
         "fps": 24,
     }
 
@@ -88,6 +88,7 @@ def _generate_clip_with_model(model: str, prompt: str, duration: int) -> dict:
 
 
 def _poll_for_result(poll_url: str, max_attempts: int = 40) -> str:
+    """Poll until clip is ready. Returns video URL."""
     for attempt in range(max_attempts):
         time.sleep(15)
         poll = requests.get(poll_url, headers=HEADERS, timeout=20)
@@ -106,14 +107,32 @@ def _poll_for_result(poll_url: str, max_attempts: int = 40) -> str:
             if video_url:
                 return video_url
             raise Exception(f"No video URL in response: {inner}")
+
         elif status == "failed":
             raise Exception(f"Generation failed: {inner.get('error', 'unknown')}")
 
     raise Exception(f"Timed out after {max_attempts * 15 / 60:.0f} minutes")
 
 
-def generate_clip(prompt: str, output_path: str, duration: int = 3) -> str:
-    for model in VIDEO_MODELS:
+def _build_model_list(preferred_model: str) -> list[str]:
+    """Build model list with preferred model first, rest as fallback."""
+    if not preferred_model or preferred_model == "auto":
+        return VIDEO_MODELS
+    # Put preferred first, then rest as fallback
+    rest = [m for m in VIDEO_MODELS if m != preferred_model]
+    return [preferred_model] + rest
+
+
+def generate_clip(
+    prompt: str,
+    output_path: str,
+    duration: int = 3,
+    preferred_model: str = "auto",
+) -> str:
+    """Generate single clip with model fallback chain."""
+    model_list = _build_model_list(preferred_model)
+
+    for model in model_list:
         try:
             print(f"  [Seedance] Generating with {model.split('/')[1]}...", flush=True)
             result = _generate_clip_with_model(model, prompt, duration)
@@ -126,6 +145,7 @@ def generate_clip(prompt: str, output_path: str, duration: int = 3) -> str:
 
             print(f"  [Seedance] ✓ Saved to {output_path}", flush=True)
             return output_path
+
         except Exception as e:
             print(f"  [Seedance] {model} failed: {e} — trying next...", flush=True)
             continue
@@ -138,7 +158,9 @@ def generate_clips_batch(
     output_dir: str,
     aspect_ratio: str = "16:9",
     duration: int = 3,
+    preferred_model: str = "auto",
 ) -> list[str]:
+    """Generate multiple clips sequentially with fallback."""
     os.makedirs(output_dir, exist_ok=True)
     clips = []
 
@@ -154,7 +176,7 @@ def generate_clips_batch(
             continue
 
         try:
-            clip = generate_clip(prompt, output_path, duration)
+            clip = generate_clip(prompt, output_path, duration, preferred_model)
             clips.append(clip)
         except Exception as e:
             print(f"  [Seedance] Clip {i} failed all models: {e} — skipping", flush=True)
@@ -163,6 +185,7 @@ def generate_clips_batch(
 
 
 def expand_custom_prompt(custom_prompt: str, count: int) -> list[str]:
+    """Expand user's custom scene description into multiple cinematic variations."""
     from openai import OpenAI
     from core.config import OPENAI_API_KEY
     import json
@@ -174,9 +197,10 @@ def expand_custom_prompt(custom_prompt: str, count: int) -> list[str]:
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": f"""Create {count} cinematic video clip descriptions based on:
-"{custom_prompt}"
-Requirements: distinct camera angles, cinematic, no text, 16:9 widescreen.
-Return ONLY valid JSON: {{"prompts": ["description 1", ...]}}"""}],
+            "{custom_prompt}"
+
+            Requirements: distinct camera angles, cinematic, no text, 16:9 widescreen.
+            Return ONLY valid JSON: {{"prompts": ["description 1", ...]}}"""}],
             response_format={"type": "json_object"},
             temperature=0.8,
         )
