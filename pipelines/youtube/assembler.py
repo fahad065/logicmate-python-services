@@ -77,11 +77,22 @@ def create_shorts(
     ], capture_output=True, text=True)
     duration = float(json.loads(result.stdout).get("format", {}).get("duration", 180))
 
-    short_duration = 50
+    short_duration = 45  # ← reduce from 50 to 45s (safer margin)
+
+    # Ensure all shorts fit within video duration
+    max_shorts = int(duration // short_duration)
+    num_shorts  = min(num_shorts, max_shorts)  # ← never exceed what fits
+
     segment = duration / num_shorts
 
     for i in range(num_shorts):
         start_time = int(i * segment)
+        # Cap end time to not exceed video duration
+        actual_duration = min(short_duration, int(duration - start_time - 1))
+        if actual_duration < 20:  # ← skip if less than 20s available
+            print(f"[Assembler] Short {i+1} skipped — not enough video left", flush=True)
+            continue
+
         output_path = os.path.join(output_dir, f"short_{i+1}.mp4")
 
         try:
@@ -92,17 +103,17 @@ def create_shorts(
                 "-i", audio_path,
                 "-map", "0:v:0", "-map", "1:a:0",
                 "-ss", str(start_time),
-                "-t", str(short_duration),
-                "-vf", "crop=ih*9/16:ih,scale=720:1280",  # lower res to prevent OOM
-                "-c:v", "libx264", "-preset", "ultrafast",  # ultrafast to prevent SIGKILL
+                "-t", str(actual_duration),  # ← use actual_duration not fixed
+                "-vf", "crop=ih*9/16:ih,scale=720:1280",
+                "-c:v", "libx264", "-preset", "ultrafast",
                 "-crf", "28",
                 "-b:v", "800k",
                 "-c:a", "aac", "-b:a", "96k",
-                "-threads", "1",  # single thread to reduce memory
+                "-threads", "1",
                 output_path
             ], check=True, capture_output=True, timeout=120)
             shorts.append(output_path)
-            print(f"[Assembler] ✓ Short {i+1} created", flush=True)
+            print(f"[Assembler] ✓ Short {i+1} created ({actual_duration}s)", flush=True)
         except Exception as e:
             print(f"[Assembler] Short {i+1} failed: {e}", flush=True)
 

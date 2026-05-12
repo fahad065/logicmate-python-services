@@ -1,171 +1,107 @@
-"""
-NestJS API client — handles auth, pipeline run updates, log streaming.
-"""
+# core/nestjs_client.py — v3
+# Handles all NestJS API calls from Python pipeline
+
 import os
 import requests
+from typing import Optional
 
-NESTJS_URL     = os.getenv("NESTJS_URL", "http://localhost:4000/api/v1")
-ADMIN_EMAIL    = os.getenv("ADMIN_EMAIL", "")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+NESTJS_BASE = os.getenv("NESTJS_API_URL", "https://api.logicmate.io")
+API_SECRET  = os.getenv("PIPELINE_SECRET", "")
 
-_cached_token = None
+HEADERS = {
+    "Content-Type": "application/json",
+    "x-pipeline-secret": API_SECRET,
+}
 
 
-def get_auth_headers() -> dict:
-    global _cached_token
-    if _cached_token:
-        return {"Authorization": f"Bearer {_cached_token}"}
+def update_pipeline_step(run_id: str, step: int, label: str) -> None:
+    """Update current step in pipeline run."""
     try:
-        resp = requests.post(
-            f"{NESTJS_URL}/auth/login",
-            json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
-            timeout=30,
+        requests.patch(
+            f"{NESTJS_BASE}/pipeline-runs/{run_id}/status",
+            json={"currentStep": step, "stepLabel": label, "status": "running"},
+            headers=HEADERS, timeout=8,
         )
-        if resp.status_code not in (200, 201):
-            print(f"[NestJS] Login failed ({resp.status_code})", flush=True)
-            return {}
-        data = resp.json()
-        token = data.get("accessToken") or data.get("access_token") or data.get("token")
-        if not token:
-            return {}
-        _cached_token = token
-        print(f"[NestJS] ✓ Admin authenticated", flush=True)
-        return {"Authorization": f"Bearer {token}"}
     except Exception as e:
-        print(f"[NestJS] Auth error: {e}", flush=True)
-        return {}
+        print(f"[NestJS] update_step failed: {e}", flush=True)
 
 
 def append_log(run_id: str, message: str) -> None:
-    """Store log line in pipeline-runs DB collection."""
+    """Append log line to pipeline run."""
     if not run_id:
         return
     try:
-        headers = get_auth_headers()
-        if not headers:
-            return
         requests.patch(
-            f"{NESTJS_URL}/pipeline-runs/{run_id}/log",
+            f"{NESTJS_BASE}/pipeline-runs/{run_id}/log",
             json={"message": message},
-            headers=headers,
-            timeout=8,
+            headers=HEADERS, timeout=8,
         )
-    except Exception:
-        pass  # Never block pipeline for log failure
-
-
-def update_pipeline_step(run_id: str, step: int, label: str = "") -> bool:
-    """Update pipeline step progress in DB."""
-    if not run_id:
-        return False
-    try:
-        headers = get_auth_headers()
-        if not headers:
-            return False
-        msg = f"[Step {step}/9] {label}"
-        append_log(run_id, msg)
-        resp = requests.patch(
-            f"{NESTJS_URL}/pipeline-runs/{run_id}/status",
-            json={"status": "running", "currentStep": step, "stepLabel": label},
-            headers=headers,
-            timeout=10,
-        )
-        return resp.status_code < 300
     except Exception as e:
-        print(f"[NestJS] Step update error: {e}", flush=True)
-        return False
+        print(f"[NestJS] append_log failed: {e}", flush=True)
 
 
-def complete_pipeline_run(run_id: str, youtube_url: str = "", title: str = "", cost: float = 0) -> bool:
-    """Mark pipeline run as complete."""
-    if not run_id:
-        return False
+def complete_pipeline_run(
+    run_id: str,
+    youtube_url: str = "",
+    title: str = "",
+    cost: float = 0,
+) -> bool:
+    """Mark pipeline run as completed."""
     try:
-        headers = get_auth_headers()
-        if not headers:
-            return False
-        append_log(run_id, f"✅ Pipeline complete! Video: {youtube_url}")
         resp = requests.patch(
-            f"{NESTJS_URL}/pipeline-runs/{run_id}/status",
+            f"{NESTJS_BASE}/pipeline-runs/{run_id}/status",
             json={
-                "status": "complete",
+                "status": "completed",
                 "youtubeUrl": youtube_url,
                 "title": title,
-                "totalCost": cost,
+                "cost": cost,
             },
-            headers=headers,
-            timeout=10,
+            headers=HEADERS, timeout=10,
         )
-        print(f"[NestJS] ✓ Run marked complete", flush=True)
-        return resp.status_code < 300
+        return resp.status_code in (200, 201)
     except Exception as e:
-        print(f"[NestJS] Complete error: {e}", flush=True)
+        print(f"[NestJS] complete_pipeline_run failed: {e}", flush=True)
         return False
 
 
 def fail_pipeline_run(run_id: str, error: str) -> bool:
     """Mark pipeline run as failed."""
-    if not run_id:
-        return False
     try:
-        headers = get_auth_headers()
-        if not headers:
-            return False
-        append_log(run_id, f"❌ Pipeline failed: {error[:300]}")
         resp = requests.patch(
-            f"{NESTJS_URL}/pipeline-runs/{run_id}/status",
+            f"{NESTJS_BASE}/pipeline-runs/{run_id}/status",
             json={"status": "failed", "errorMessage": error[:500]},
-            headers=headers,
-            timeout=10,
+            headers=HEADERS, timeout=10,
         )
-        return resp.status_code < 300
+        return resp.status_code in (200, 201)
     except Exception as e:
-        print(f"[NestJS] Fail error: {e}", flush=True)
+        print(f"[NestJS] fail_pipeline_run failed: {e}", flush=True)
         return False
 
 
-def notify_complete(run_id: str, user_id: str, title: str, url: str):
-    """Send pipeline complete notification."""
+def notify_complete(
+    run_id: str,
+    user_id: str,
+    title: str,
+    youtube_url: str,
+) -> None:
+    """Notify NestJS to send pipeline complete email + notification."""
     try:
-        headers = get_auth_headers()
-        if not headers:
-            return
         requests.post(
-            f"{NESTJS_URL}/notifications",
-            json={
-                "userId": user_id,
-                "type": "pipeline_complete",
-                "title": "🎬 Video uploaded!",
-                "message": f'"{title}" is now live on YouTube.',
-                "actionUrl": url,
-                "icon": "✅",
-            },
-            headers=headers,
-            timeout=10,
-        )
-        print(f"[NestJS] ✓ Notification sent", flush=True)
-    except Exception as e:
-        print(f"[NestJS] Notify error: {e}", flush=True)
-
-
-def notify_failed(run_id: str, user_id: str, error: str):
-    """Send pipeline failure notification."""
-    try:
-        headers = get_auth_headers()
-        if not headers:
-            return
-        requests.post(
-            f"{NESTJS_URL}/notifications",
-            json={
-                "userId": user_id,
-                "type": "pipeline_failed",
-                "title": "❌ Pipeline failed",
-                "message": f"Error: {error[:200]}. Please try again.",
-                "actionUrl": "/dashboard/pipeline-logs",
-                "icon": "❌",
-            },
-            headers=headers,
-            timeout=10,
+            f"{NESTJS_BASE}/pipeline-runs/{run_id}/notify-complete",
+            json={"userId": user_id, "title": title, "youtubeUrl": youtube_url},
+            headers=HEADERS, timeout=10,
         )
     except Exception as e:
-        print(f"[NestJS] Notify failed error: {e}", flush=True)
+        print(f"[NestJS] notify_complete failed: {e}", flush=True)
+
+
+def notify_failed(run_id: str, user_id: str, error: str) -> None:
+    """Notify NestJS to send pipeline failed email + notification."""
+    try:
+        requests.post(
+            f"{NESTJS_BASE}/pipeline-runs/{run_id}/notify-failed",
+            json={"userId": user_id, "error": error[:300]},
+            headers=HEADERS, timeout=10,
+        )
+    except Exception as e:
+        print(f"[NestJS] notify_failed failed: {e}", flush=True)
