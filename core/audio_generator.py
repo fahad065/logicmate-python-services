@@ -64,55 +64,124 @@ def clean_script(text: str) -> str:
     return text.strip()
 
 
+def chunk_text(text: str, max_chars: int = 4000) -> list[str]:
+    """Split text into chunks of max_chars, splitting on sentence boundaries."""
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    chunks = []
+    current = ""
+    for sentence in sentences:
+        if len(current) + len(sentence) + 1 <= max_chars:
+            current += (" " if current else "") + sentence
+        else:
+            if current:
+                chunks.append(current)
+            # If single sentence is too long, split by words
+            if len(sentence) > max_chars:
+                words = sentence.split()
+                current = ""
+                for word in words:
+                    if len(current) + len(word) + 1 <= max_chars:
+                        current += (" " if current else "") + word
+                    else:
+                        chunks.append(current)
+                        current = word
+            else:
+                current = sentence
+    if current:
+        chunks.append(current)
+    return chunks
+ 
+ 
+def merge_audio_chunks(chunk_paths: list[str], output_path: str) -> None:
+    """Merge multiple mp3 files into one using FFmpeg."""
+    if len(chunk_paths) == 1:
+        import shutil
+        shutil.copy(chunk_paths[0], output_path)
+        return
+ 
+    # Create concat file
+    concat_file = output_path.replace(".mp3", "_concat.txt")
+    with open(concat_file, "w") as f:
+        for path in chunk_paths:
+            f.write(f"file '{path}'\n")
+ 
+    subprocess.run([
+        "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+        "-i", concat_file, "-c", "copy", output_path
+    ], capture_output=True, check=True)
+ 
+    os.remove(concat_file)
+    for path in chunk_paths:
+        try:
+            os.remove(path)
+        except Exception:
+            pass
+ 
+ 
 def generate_voiceover(
     script: str,
     output_path: str,
     folder_path: str = None,
     target_duration: int = 420,
 ) -> tuple[str, float]:
-    """Generate voiceover. Returns (output_path, tts_cost)."""
+    """Generate voiceover with chunking for long scripts. Returns (output_path, tts_cost)."""
     tts_cost = calculate_tts_cost(script)
     profile = get_profile(folder_path)
     cleaned = clean_script(script)
-
+ 
+    print(f"  [TTS] Script length: {len(cleaned)} chars", flush=True)
     print(f"  [TTS] Generating voiceover ({profile['name']}, voice={profile['voice']})...", flush=True)
-
-    # Try each TTS model in order
-    response = None
-    for model in TTS_MODELS:
+ 
+    # Split into chunks of 4000 chars max
+    chunks = chunk_text(cleaned, max_chars=4000)
+    print(f"  [TTS] Split into {len(chunks)} chunks", flush=True)
+ 
+    chunk_paths = []
+ 
+    for i, chunk in enumerate(chunks):
+        chunk_raw = output_path.replace(".mp3", f"_chunk_{i}_raw.mp3")
+        chunk_path = output_path.replace(".mp3", f"_chunk_{i}.mp3")
+ 
+        # Try each TTS model
+        response = None
+        for model in TTS_MODELS:
+            try:
+                response = client.audio.speech.create(
+                    model=model,
+                    voice=profile["voice"],
+                    input=chunk,
+                    speed=profile["speed"],
+                )
+                print(f"  [TTS] Chunk {i+1}/{len(chunks)} done (model: {model})", flush=True)
+                break
+            except Exception as e:
+                print(f"  [TTS] {model} chunk {i+1} failed: {e} — trying next...", flush=True)
+ 
+        if not response:
+            raise Exception(f"All TTS models failed for chunk {i+1}")
+ 
+        # Save chunk
+        with open(chunk_raw, "wb") as f:
+            f.write(response.content)
+ 
+        # Apply audio enhancement
         try:
-            response = client.audio.speech.create(
-                model=model,
-                voice=profile["voice"],
-                input=cleaned,
-                speed=profile["speed"],
-            )
-            print(f"  [TTS] Using model: {model}", flush=True)
-            break
-        except Exception as e:
-            print(f"  [TTS] {model} failed: {e} — trying next...", flush=True)
-
-    if not response:
-        raise Exception("All TTS models failed")
-
-    # Save raw mp3
-    raw_path = output_path.replace(".mp3", "_raw.mp3")
-    with open(raw_path, "wb") as f:
-        f.write(response.content)
-
-    # Apply FFmpeg audio enhancement — boost bass for dramatic effect
-    try:
-        subprocess.run([
-            "ffmpeg", "-y", "-i", raw_path,
-            "-af", "bass=g=4:f=80:w=50,treble=g=2:f=8000,loudnorm=I=-14:LRA=7:TP=-2",
-            "-ar", "44100",
-            "-b:a", "192k",
-            output_path
-        ], capture_output=True, check=True)
-        os.remove(raw_path)
-    except Exception:
-        os.rename(raw_path, output_path)
-
+            subprocess.run([
+                "ffmpeg", "-y", "-i", chunk_raw,
+                "-af", "bass=g=4:f=80:w=50,treble=g=2:f=8000,loudnorm=I=-14:LRA=7:TP=-2",
+                "-ar", "44100", "-b:a", "192k",
+                chunk_path
+            ], capture_output=True, check=True)
+            os.remove(chunk_raw)
+        except Exception:
+            os.rename(chunk_raw, chunk_path)
+ 
+        chunk_paths.append(chunk_path)
+ 
+    # Merge all chunks
+    print(f"  [TTS] Merging {len(chunk_paths)} audio chunks...", flush=True)
+    merge_audio_chunks(chunk_paths, output_path)
+ 
     print(f"  [TTS] ✓ Voiceover saved: {output_path}", flush=True)
     return output_path, tts_cost
 
