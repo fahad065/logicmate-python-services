@@ -20,6 +20,15 @@ VIDEO_MODELS = [
     "alibaba/happyhorse-1.0/text-to-video",       # last resort
 ]
 
+# Atlas pricing per second per model
+ATLAS_PRICE_PER_SEC = {
+    "alibaba/wan-2.6/text-to-video":              0.07,   # $0.35 for 5s
+    "alibaba/happyhorse-1.0/text-to-video":       0.07,
+    "bytedance/seedance-2.0-fast/text-to-video":  0.156,  # $0.78 for 5s
+    "bytedance/seedance-2.0/text-to-video":       0.194,  # $0.97 for 5s
+    "auto":                                        0.07,   # default cheapest
+}
+
 # ── Dark Psychology scene prompts ─────────────────────────────
 DARK_PSYCH_SCENES = [
     "extreme close-up of human eye dilating in darkness, intense psychological thriller atmosphere, 4K cinematic",
@@ -51,6 +60,11 @@ ABSTRACT_SCENES = [
     "neural network visualization, dark background, synapses firing in slow motion",
     "binary code rain forming human face, dark Matrix-style, cinematic 4K",
 ]
+
+def get_clip_cost(model: str, duration: int) -> float:
+    """Calculate exact clip cost based on model and duration."""
+    price_per_sec = ATLAS_PRICE_PER_SEC.get(model, 0.07)
+    return round(price_per_sec * duration, 4)
 
 
 def get_scene_prompts(niche: str, count: int, aspect_ratio: str = "16:9") -> list[str]:
@@ -126,30 +140,31 @@ def _build_model_list(preferred_model: str) -> list[str]:
 def generate_clip(
     prompt: str,
     output_path: str,
-    duration: int = 3,
+    duration: int = 5,
     preferred_model: str = "auto",
-) -> str:
-    """Generate single clip with model fallback chain."""
+) -> tuple[str, float]:
+    """Generate single clip. Returns (output_path, cost)."""
     model_list = _build_model_list(preferred_model)
-
+ 
     for model in model_list:
         try:
             print(f"  [Seedance] Generating with {model.split('/')[1]}...", flush=True)
             result = _generate_clip_with_model(model, prompt, duration)
             video_url = _poll_for_result(result["poll_url"])
-
+ 
             video_resp = requests.get(video_url, timeout=120)
             video_resp.raise_for_status()
             with open(output_path, "wb") as f:
                 f.write(video_resp.content)
-
-            print(f"  [Seedance] ✓ Saved to {output_path}", flush=True)
-            return output_path
-
+ 
+            cost = get_clip_cost(model, duration)
+            print(f"  [Seedance] ✓ Saved to {output_path} (cost: ${cost})", flush=True)
+            return output_path, cost
+ 
         except Exception as e:
             print(f"  [Seedance] {model} failed: {e} — trying next...", flush=True)
             continue
-
+ 
     raise Exception(f"All video models failed for prompt: {prompt[:50]}")
 
 
@@ -157,31 +172,38 @@ def generate_clips_batch(
     prompts: list[str],
     output_dir: str,
     aspect_ratio: str = "16:9",
-    duration: int = 3,
+    duration: int = 5,
     preferred_model: str = "auto",
-) -> list[str]:
-    """Generate multiple clips sequentially with fallback."""
+) -> tuple[list[str], float]:
+    """Generate multiple clips. Returns (clips, total_atlas_cost)."""
     os.makedirs(output_dir, exist_ok=True)
     clips = []
-
+    total_cost = 0.0
+ 
     for i, prompt in enumerate(prompts):
         short_prompt = prompt[:80] + "..." if len(prompt) > 80 else prompt
-        print(f"  [Seedance] Generating: {short_prompt}", flush=True)
-
+        print(f"  [Seedance] Clip {i+1}/{len(prompts)}: {short_prompt}", flush=True)
+ 
         output_path = os.path.join(output_dir, f"clip_{i:03d}.mp4")
-
+ 
         if os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
             print(f"  [Seedance] ✓ Resuming — clip {i} already exists", flush=True)
             clips.append(output_path)
+            total_cost += get_clip_cost(
+                preferred_model if preferred_model != "auto" else VIDEO_MODELS[0],
+                duration
+            )
             continue
-
+ 
         try:
-            clip = generate_clip(prompt, output_path, duration, preferred_model)
+            clip, cost = generate_clip(prompt, output_path, duration, preferred_model)
             clips.append(clip)
+            total_cost += cost
         except Exception as e:
             print(f"  [Seedance] Clip {i} failed all models: {e} — skipping", flush=True)
-
-    return clips
+ 
+    print(f"  [Seedance] ✓ {len(clips)} clips, Atlas cost: ${total_cost:.4f}", flush=True)
+    return clips, total_cost
 
 
 def expand_custom_prompt(custom_prompt: str, count: int) -> list[str]:

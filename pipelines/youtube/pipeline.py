@@ -26,7 +26,7 @@ from core.nestjs_client import (
     notify_complete,
     notify_failed,
     append_log,
-    record_module_run,  # ← add this
+    record_module_run,
 )
 from core.utils import (
     create_run_folder, find_resumable_folder,
@@ -59,6 +59,15 @@ def run_youtube_pipeline(
     folder_path = None
 
     try:
+        # ── Cost tracker — real costs from each API ───────────
+        cost_tracker = {
+            "openai_topics": 0.0,
+            "openai_script": 0.0,
+            "openai_tts":    0.0,
+            "atlas_clips":   0.0,
+            "openai_image":  0.0,
+        }
+
         # Check for resumable run
         folder_path = find_resumable_folder(OUTPUT_BASE, "youtube", user_id)
         if folder_path:
@@ -86,7 +95,8 @@ def run_youtube_pipeline(
             append_log(run_id, "[Step 1/9] Researching trending topics...")
             update_pipeline_step(run_id, 1, "Researching topics")
 
-            topics = generate_topic_ideas(niche, count=3, format_type="youtube")
+            topics, topic_cost = generate_topic_ideas(niche, count=3, format_type="youtube")
+            cost_tracker["openai_topics"] = topic_cost
             topic = topics[0] if topics else f"The dark truth about {niche}"
             append_log(run_id, f"  Topic selected: {topic}")
 
@@ -94,7 +104,9 @@ def run_youtube_pipeline(
             append_log(run_id, f"[Step 2/9] Writing script: {topic[:60]}")
             update_pipeline_step(run_id, 2, "Writing script")
 
-            script_data = generate_youtube_script(niche, topic)
+            script_data, script_cost = generate_youtube_script(niche, topic)
+            cost_tracker["openai_script"] = script_cost
+
             metadata.update({
                 "title":          script_data["title"],
                 "description":    script_data["description"],
@@ -115,12 +127,13 @@ def run_youtube_pipeline(
             append_log(run_id, "[Step 3/9] Generating voiceover...")
             update_pipeline_step(run_id, 3, "Generating voiceover")
 
-            generate_voiceover(
+            _, tts_cost = generate_voiceover(
                 script=metadata["script"],
                 output_path=audio_path,
                 folder_path=folder_path,
                 target_duration=TARGET_DURATION,
             )
+            cost_tracker["openai_tts"] = tts_cost
             metadata["audio_path"] = audio_path
             metadata["status"]     = "audio_done"
             save_metadata(folder_path, metadata)
@@ -148,17 +161,18 @@ def run_youtube_pipeline(
             else:
                 prompts = get_scene_prompts(niche, NUM_CLIPS, aspect_ratio="16:9")
 
-            clips = generate_clips_batch(
+            clips, atlas_cost = generate_clips_batch(
                 prompts=prompts,
                 output_dir=clips_dir,
                 aspect_ratio="16:9",
                 duration=CLIP_DURATION,
                 preferred_model=video_model,
             )
+            cost_tracker["atlas_clips"] = atlas_cost
             metadata["clips"]  = clips
             metadata["status"] = "clips_done"
             save_metadata(folder_path, metadata)
-            append_log(run_id, f"  ✓ {len(clips)} clips generated")
+            append_log(run_id, f"  ✓ {len(clips)} clips generated (${atlas_cost:.4f})")
         else:
             clips = existing_clips
             append_log(run_id, f"  [Resume] {len(clips)} clips already exist")
@@ -184,11 +198,12 @@ def run_youtube_pipeline(
             append_log(run_id, "[Step 6/9] Generating thumbnail...")
             update_pipeline_step(run_id, 6, "Generating thumbnail")
             try:
-                generate_thumbnail(
+                image_cost = generate_thumbnail(
                     title=metadata["title"],
                     niche=niche,
                     output_path=thumbnail_path,
                 )
+                cost_tracker["openai_image"] = image_cost or 0.04  # DALL-E ~$0.04
                 metadata["thumbnail"] = thumbnail_path
                 save_metadata(folder_path, metadata)
                 append_log(run_id, "  ✓ Thumbnail generated")
@@ -267,15 +282,25 @@ def run_youtube_pipeline(
         log("\n[Step 9/9] Notifying...")
         append_log(run_id, "[Step 9/9] Pipeline complete! 🎉")
 
-        cost = round(0.58 * NUM_CLIPS + 0.45, 2)  # ← no trailing comma
+        # Calculate real total cost
+        total_cost = round(sum(cost_tracker.values()), 4)
+        openai_total = round(
+            cost_tracker["openai_topics"] +
+            cost_tracker["openai_script"] +
+            cost_tracker["openai_tts"] +
+            cost_tracker["openai_image"], 4
+        )
+        print(f"[Cost] Breakdown: {cost_tracker}", flush=True)
+        print(f"[Cost] Total: ${total_cost}", flush=True)
+        append_log(run_id, f"💰 Total: ${total_cost} | Atlas: ${cost_tracker['atlas_clips']:.4f} | OpenAI: ${openai_total:.4f}")
 
         complete_pipeline_run(
             run_id=run_id,
             youtube_url=metadata.get("youtube_url", ""),
             title=metadata.get("title", ""),
-            cost=cost,
+            cost=total_cost,
         )
-        record_module_run(user_module_id=user_module_id, cost=cost)
+        record_module_run(user_module_id=user_module_id, cost=total_cost)
         notify_complete(run_id, user_id, metadata["title"], metadata.get("youtube_url", ""))
 
         # ── Cleanup ───────────────────────────────────────────
@@ -286,6 +311,7 @@ def run_youtube_pipeline(
             "status": "success",
             "youtube_url": metadata.get("youtube_url"),
             "title": metadata.get("title"),
+            "cost": total_cost,
         }
 
     except Exception as e:

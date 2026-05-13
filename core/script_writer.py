@@ -8,55 +8,42 @@ from core.config import OPENAI_API_KEY
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
+# OpenAI pricing (GPT-4o-mini)
+OPENAI_PRICE_PER_1K_INPUT  = 0.00015   # $0.15 per 1M input tokens
+OPENAI_PRICE_PER_1K_OUTPUT = 0.0006    # $0.60 per 1M output tokens
 
-def generate_youtube_script(niche: str, title: str) -> dict:
-    """Generate a full YouTube video script (3-5 min)."""
-    prompt = f"""You are a top YouTube scriptwriter for viral dark psychology and human behavior channels.
-Your videos get millions of views because they are shocking, mysterious and deeply engaging.
+def calculate_openai_cost(usage) -> float:
+    """Calculate cost from OpenAI usage object."""
+    if not usage:
+        return 0.0
+    input_cost  = (usage.prompt_tokens / 1000) * OPENAI_PRICE_PER_1K_INPUT
+    output_cost = (usage.completion_tokens / 1000) * OPENAI_PRICE_PER_1K_OUTPUT
+    return round(input_cost + output_cost, 6)
 
-Write a complete video script for: "{title}"
-Niche: {niche}
-
-SCRIPT REQUIREMENTS:
-- HOOK (first 10 seconds): Start with a shocking statement, dark secret or disturbing fact that makes viewer STOP scrolling
-- Build tension and mystery throughout
-- Use phrases like "What I'm about to tell you...", "Most people don't know this...", "The disturbing truth is..."
-- 3-5 minutes when spoken at 130 words per minute (~400-650 words)
-- Add retention hooks every 45-60 seconds ("But here's where it gets darker...", "Wait until you hear this part...")
-- End with a cliffhanger or shocking revelation
-- Strong CTA: "Subscribe before they remove this video" or "Comment if this disturbed you"
-- Conversational, bold, direct — like you're revealing forbidden knowledge
-
-TITLE REQUIREMENTS:
-- Use power words: Secret, Dark, Disturbing, Hidden, Exposed, Shocking, Warning
-- Under 70 characters
-- Make viewer feel they MUST watch (e.g. "The Dark Secret Behind..." / "Why They Don't Want You To Know...")
-
-DESCRIPTION REQUIREMENTS:
-- Start with a hook sentence
-- 200-250 words
-- Include 5-8 relevant hashtags at the end like #DarkPsychology #HumanBehavior #Psychology #MindControl
-- Include timestamps placeholder
-- End with subscribe CTA
-
-TAGS: 15-20 highly searchable tags related to dark psychology, human behavior, manipulation, mind control
-
-Return ONLY valid JSON:
-{{
-  "title": "Shocking SEO title with power words under 70 chars",
-  "description": "Engaging description 200-250 words with hashtags at end",
-  "tags": ["dark psychology", "human behavior", "manipulation tactics", "mind control", "psychology facts", "social engineering", "persuasion", "influence", "cognitive bias", "behavioral psychology", "tag11", "tag12", "tag13", "tag14", "tag15"],
-  "script": "Full gripping script here...",
-  "thumbnail_text": "SHOCKING 3-4 word hook for thumbnail"
-}}"""
-
+def generate_youtube_script(niche: str, topic: str) -> tuple[dict, float]:
+    """Generate full YouTube script. Returns (script_data, cost)."""
+    total_cost = 0.0
+ 
+    # Script generation
     resp = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.85,
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": f"""Write a YouTube video script about "{topic}" in the niche of {niche}.
+            Return ONLY valid JSON:
+            {{
+                "title": "engaging YouTube title",
+                "description": "YouTube description (200 words)",
+                "tags": ["tag1", "tag2", ...],
+                "script": "full narration script (800-1000 words)",
+                "thumbnail_text": "short punchy text for thumbnail"
+            }}"""}],
         response_format={"type": "json_object"},
+        temperature=0.8,
     )
-    return json.loads(resp.choices[0].message.content)
+    total_cost += calculate_openai_cost(resp.usage)
+ 
+    import json
+    data = json.loads(resp.choices[0].message.content)
+    return data, total_cost
 
 
 def generate_reels_script(niche: str, topic: str) -> dict:
@@ -95,30 +82,16 @@ Return ONLY valid JSON:
     return json.loads(resp.choices[0].message.content)
 
 
-def generate_topic_ideas(niche: str, count: int = 5, format_type: str = "youtube") -> list[str]:
-    """Generate trending topic ideas for a niche."""
-    if format_type == "reels":
-        instruction = "viral short-form Reels/TikTok videos (30-60 seconds)"
-    else:
-        instruction = "YouTube videos (3-5 minutes) that get millions of views"
-
-    prompt = f"""Generate {count} highly viral {instruction} topic ideas for: {niche}
-
-Requirements:
-- Each topic must be SHOCKING, DARK or reveal a FORBIDDEN SECRET
-- Must make people feel they NEED to watch immediately
-- Use formats like: "The Dark Truth About...", "Why [Authority] Hides This...", "The Psychological Trick That..."
-- High search potential AND viral share potential
-- Never been done before angle
-
-Return ONLY valid JSON:
-{{"topics": ["topic 1", "topic 2", "topic 3"]}}"""
-
+def generate_topic_ideas(niche: str, count: int = 3, format_type: str = "youtube") -> tuple[list, float]:
+    """Generate topic ideas. Returns (topics, cost)."""
     resp = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.95,
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": f"""Generate {count} viral {format_type} video topics for niche: {niche}
+Return ONLY valid JSON: {{"topics": ["topic1", "topic2", ...]}}"""}],
         response_format={"type": "json_object"},
+        temperature=0.9,
     )
+    cost = calculate_openai_cost(resp.usage)
+    import json
     data = json.loads(resp.choices[0].message.content)
-    return data.get("topics", [])[:count]
+    return data.get("topics", [f"The dark truth about {niche}"]), cost

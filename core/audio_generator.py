@@ -38,6 +38,15 @@ TTS_MODELS = [
     "tts-1",      # fallback — faster, slightly lower quality
 ]
 
+# TTS pricing
+TTS_PRICE_PER_CHAR = 0.000015   # $15 per 1M characters (tts-1-hd)
+TTS_HD_PRICE       = 0.000030   # $30 per 1M characters (tts-1-hd premium)
+ 
+def calculate_tts_cost(text: str, model: str = "tts-1-hd") -> float:
+    """Calculate TTS cost based on character count."""
+    price = TTS_HD_PRICE if model == "tts-1-hd" else TTS_PRICE_PER_CHAR
+    return round(len(text) * price, 6)
+
 
 def get_profile(folder_path: str) -> dict:
     """Pick consistent bold profile based on folder path hash."""
@@ -58,10 +67,11 @@ def clean_script(text: str) -> str:
 def generate_voiceover(
     script: str,
     output_path: str,
-    folder_path: str = "",
-    target_duration: int = 180,
-) -> str:
-    """Generate bold dramatic voiceover using OpenAI TTS with fallback."""
+    folder_path: str = None,
+    target_duration: int = 420,
+) -> tuple[str, float]:
+    """Generate voiceover. Returns (output_path, tts_cost)."""
+    tts_cost = calculate_tts_cost(script)
     profile = get_profile(folder_path)
     cleaned = clean_script(script)
 
@@ -104,7 +114,7 @@ def generate_voiceover(
         os.rename(raw_path, output_path)
 
     print(f"  [TTS] ✓ Voiceover saved: {output_path}", flush=True)
-    return output_path
+    return output_path, tts_cost
 
 
 def get_audio_duration(path: str) -> float:
