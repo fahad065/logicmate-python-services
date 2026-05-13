@@ -26,6 +26,7 @@ from core.nestjs_client import (
     notify_complete,
     notify_failed,
     append_log,
+    record_module_run,  # ← add this
 )
 from core.utils import (
     create_run_folder, find_resumable_folder,
@@ -270,12 +271,15 @@ def run_youtube_pipeline(
         log("\n[Step 9/9] Notifying...")
         append_log(run_id, "[Step 9/9] Pipeline complete! 🎉")
 
+        cost = round(0.35 * NUM_CLIPS + 0.31, 2)
+
         complete_pipeline_run(
             run_id=run_id,
             youtube_url=metadata.get("youtube_url", ""),
             title=metadata.get("title", ""),
-            cost=round(0.35 * NUM_CLIPS + 0.31, 2),
+            cost=cost,
         )
+        record_module_run(user_module_id=user_module_id, cost=cost)
         notify_complete(run_id, user_id, metadata["title"], metadata.get("youtube_url", ""))
 
         # ── Cleanup ───────────────────────────────────────────
