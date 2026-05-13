@@ -15,7 +15,7 @@ Steps:
 import os
 import datetime
 
-from core.config import OUTPUT_BASE, NUM_SHORTS
+from core.config import OUTPUT_BASE, NUM_SHORTS, NUM_CLIPS, CLIP_DURATION, TARGET_DURATION
 from core.script_writer import generate_youtube_script, generate_topic_ideas
 from core.audio_generator import generate_voiceover, get_audio_duration
 from core.video_generator import generate_clips_batch, get_scene_prompts, expand_custom_prompt
@@ -39,10 +39,6 @@ try:
     from pipelines.youtube.assembler import assemble_video, create_shorts
 except ImportError as e:
     print(f"[Warning] YouTube module import failed: {e}")
-
-NUM_CLIPS       = 8
-CLIP_DURATION   = 3
-TARGET_DURATION = 180
 
 
 def run_youtube_pipeline(
@@ -271,7 +267,7 @@ def run_youtube_pipeline(
         log("\n[Step 9/9] Notifying...")
         append_log(run_id, "[Step 9/9] Pipeline complete! 🎉")
 
-        cost = round(0.35 * NUM_CLIPS + 0.31, 2)
+        cost = round(0.58 * NUM_CLIPS + 0.45, 2)  # ← no trailing comma
 
         complete_pipeline_run(
             run_id=run_id,

@@ -26,6 +26,9 @@ GMAIL_APP_PASS   = os.getenv("GMAIL_APP_PASSWORD", "")
 
 # ── Defaults ──────────────────────────────────────────────────
 DEFAULT_NICHE    = os.getenv("NICHE", "dark psychology and human behavior")
+NUM_CLIPS        = int(os.getenv("NUM_CLIPS", "12"))
+CLIP_DURATION    = int(os.getenv("CLIP_DURATION", "5"))
+TARGET_DURATION  = int(os.getenv("TARGET_DURATION", "420"))
 NUM_SHORTS       = int(os.getenv("NUM_SHORTS", "3"))
 
 # ── Platform detection (macOS vs Linux/Railway) ───────────────
