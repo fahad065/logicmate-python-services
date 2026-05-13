@@ -26,7 +26,7 @@ def generate_youtube_script(niche: str, topic: str) -> tuple[dict, float]:
  
     # Script generation
     resp = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="gpt-4o",
         messages=[{"role": "user", "content": f"""You are an expert YouTube scriptwriter. Write a detailed, engaging YouTube video script about "{topic}" in the niche of {niche}.
             The script must be 1500-2000 words long to fill a 7-8 minute video. Structure it as:
             - HOOK (0-30s): Shocking opening that grabs attention immediately
