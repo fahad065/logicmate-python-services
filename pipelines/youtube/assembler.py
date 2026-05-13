@@ -104,7 +104,7 @@ def create_shorts(
                 "-map", "0:v:0", "-map", "1:a:0",
                 "-ss", str(start_time),
                 "-t", str(actual_duration),  # ← use actual_duration not fixed
-                "-vf", "crop=ih*9/16:ih,scale=720:1280",
+                "-vf", "crop=ih*9/16:ih,scale=1080:1920",
                 "-c:v", "libx264", "-preset", "ultrafast",
                 "-crf", "28",
                 "-b:v", "800k",

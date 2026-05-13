@@ -66,8 +66,8 @@ def _generate_clip_with_model(model: str, prompt: str, duration: int) -> dict:
     payload = {
         "model": model,
         "prompt": prompt,
-        "width": 854,
-        "height": 480,
+        "width": 1920,
+        "height": 1080,
         "duration": min(duration, 3),  # cap at 3s to control cost
         "fps": 24,
     }
