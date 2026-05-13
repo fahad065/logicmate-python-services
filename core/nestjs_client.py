@@ -63,6 +63,15 @@ def complete_pipeline_run(
         print(f"[NestJS] complete_pipeline_run failed: {e}", flush=True)
         return False
 
+def record_run(user_module_id: str, cost: float) -> None:
+    try:
+        requests.patch(
+            f"{NESTJS_BASE}/usermodules/{user_module_id}/record-run",
+            json={"cost": cost},
+            headers=HEADERS, timeout=8,
+        )
+    except Exception as e:
+        print(f"[NestJS] record_run failed: {e}", flush=True)
 
 def fail_pipeline_run(run_id: str, error: str) -> bool:
     """Mark pipeline run as failed."""
