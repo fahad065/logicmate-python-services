@@ -17,7 +17,7 @@ def _get_nestjs_url() -> str:
 
 def _get_admin_token() -> str:
     """Get NestJS admin JWT token."""
-    nestjs_url = _get_nestjs_url()
+    nestjs_url     = _get_nestjs_url()
     admin_email    = os.getenv("ADMIN_EMAIL", "")
     admin_password = os.getenv("ADMIN_PASSWORD", "")
 
@@ -25,34 +25,29 @@ def _get_admin_token() -> str:
     print(f"  [YouTube] NestJS URL: {nestjs_url}", flush=True)
 
     if not admin_email or not admin_password:
-        raise Exception("ADMIN_EMAIL or ADMIN_PASSWORD env vars not set in Railway")
+        raise Exception("ADMIN_EMAIL or ADMIN_PASSWORD env vars not set")
 
-    try:
-        resp = http_requests.post(
-            f"{nestjs_url}/auth/login",
-            json={"email": admin_email, "password": admin_password},
-            timeout=30,
-        )
-        print(f"  [YouTube] Login response status: {resp.status_code}", flush=True)
+    resp = http_requests.post(
+        f"{nestjs_url}/auth/login",
+        json={"email": admin_email, "password": admin_password},
+        timeout=30,
+    )
+    print(f"  [YouTube] Login response status: {resp.status_code}", flush=True)
 
-        if resp.status_code != 200 and resp.status_code != 201:
-            raise Exception(f"Login failed ({resp.status_code}): {resp.text[:200]}")
+    if resp.status_code not in (200, 201):
+        raise Exception(f"Login failed ({resp.status_code}): {resp.text[:200]}")
 
-        data = resp.json()
-        token = data.get("accessToken") or data.get("access_token") or data.get("token")
+    data  = resp.json()
+    token = data.get("accessToken") or data.get("access_token") or data.get("token")
+    if not token:
+        raise Exception(f"No token in login response: {list(data.keys())}")
 
-        if not token:
-            raise Exception(f"No token in login response: {list(data.keys())}")
-
-        print(f"  [YouTube] ✓ Admin token obtained", flush=True)
-        return token
-
-    except Exception as e:
-        raise Exception(f"Failed to get admin token from NestJS: {e}")
+    print(f"  [YouTube] ✓ Admin token obtained", flush=True)
+    return token
 
 
-def _get_youtube_service(user_id: str):
-    """Build authenticated YouTube service using tokens from NestJS."""
+def get_user_credentials(user_id: str) -> Credentials:
+    """Get Google OAuth credentials for a user from NestJS."""
     nestjs_url  = _get_nestjs_url()
     admin_token = _get_admin_token()
 
@@ -63,16 +58,12 @@ def _get_youtube_service(user_id: str):
         headers={"Authorization": f"Bearer {admin_token}"},
         timeout=30,
     )
-
     print(f"  [YouTube] Token fetch status: {resp.status_code}", flush=True)
 
     if resp.status_code != 200:
-        raise Exception(
-            f"Failed to fetch YouTube tokens (status {resp.status_code}): {resp.text[:300]}"
-        )
+        raise Exception(f"Failed to fetch YouTube tokens ({resp.status_code}): {resp.text[:300]}")
 
     token_data = resp.json()
-
     access_token  = token_data.get("access_token")
     refresh_token = token_data.get("refresh_token")
 
@@ -93,12 +84,16 @@ def _get_youtube_service(user_id: str):
         ],
     )
 
-    # Refresh if expired
     if creds.expired and creds.refresh_token:
         print(f"  [YouTube] Refreshing expired token...", flush=True)
         creds.refresh(Request())
 
-    return build("youtube", "v3", credentials=creds)
+    return creds
+
+
+def _get_youtube_service(user_id: str):
+    """Build authenticated YouTube service."""
+    return build("youtube", "v3", credentials=get_user_credentials(user_id))
 
 
 def upload_to_youtube(
@@ -111,12 +106,10 @@ def upload_to_youtube(
 ) -> dict:
     """Upload video to YouTube with full SEO metadata."""
     print(f"  [YouTube] Uploading: {title[:50]}...", flush=True)
- 
-    credentials = get_user_credentials(user_id)
- 
-    youtube = build("youtube", "v3", credentials=credentials)
- 
-    # Ensure tags are within YouTube limits (500 chars total)
+
+    youtube = _get_youtube_service(user_id)
+
+    # Build tags within 500 char limit
     tag_str = ""
     final_tags = []
     for tag in tags:
@@ -125,15 +118,15 @@ def upload_to_youtube(
             tag_str += tag + ", "
         else:
             break
- 
+
     print(f"  [YouTube] Using {len(final_tags)} tags ({len(tag_str)} chars)", flush=True)
- 
+
     body = {
         "snippet": {
             "title": title[:100],
             "description": description[:5000],
             "tags": final_tags,
-            "categoryId": "22",  # People & Blogs
+            "categoryId": "22",
             "defaultLanguage": "en",
             "defaultAudioLanguage": "en",
         },
@@ -142,20 +135,20 @@ def upload_to_youtube(
             "selfDeclaredMadeForKids": False,
         }
     }
- 
-    media = MediaFileUpload(video_path, mimetype="video/mp4", resumable=True, chunksize=5 * 1024 * 1024)
+
+    media   = MediaFileUpload(video_path, mimetype="video/mp4", resumable=True, chunksize=5 * 1024 * 1024)
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
- 
+
     response = None
     while response is None:
         status, response = request.next_chunk()
         if status:
             print(f"  [YouTube] Upload progress: {int(status.progress() * 100)}%", flush=True)
- 
+
     video_id  = response["id"]
     video_url = f"https://www.youtube.com/watch?v={video_id}"
     print(f"  [YouTube] ✓ Uploaded: {video_url}", flush=True)
- 
+
     # Set thumbnail
     if thumbnail_path and os.path.exists(thumbnail_path):
         try:
@@ -166,10 +159,10 @@ def upload_to_youtube(
             print(f"  [YouTube] ✓ Thumbnail set", flush=True)
         except Exception as e:
             print(f"  [YouTube] Thumbnail failed (non-critical): {e}", flush=True)
- 
+
     return {"id": video_id, "url": video_url}
- 
- 
+
+
 def upload_short(
     video_path: str,
     title: str,
@@ -179,16 +172,19 @@ def upload_short(
 ) -> dict:
     """Upload YouTube Short with SEO metadata."""
     print(f"  [YouTube] Uploading Short: {title[:50]}...", flush=True)
- 
-    credentials = get_user_credentials(user_id)
-    youtube = build("youtube", "v3", credentials=credentials)
- 
-    # Add Shorts-specific tags
+
+    youtube = _get_youtube_service(user_id)
+
+    # Shorts-specific tags
     shorts_tags = tags[:30] + ["Shorts", "YouTubeShorts", "Short", "Viral", "DarkPsychology"]
- 
-    # Shorts description — add #Shorts at start for algorithm
-    shorts_description = f"#Shorts #YouTubeShorts\n\n{description[:400]}\n\n#Psychology #DarkPsychology #HumanBehavior #Viral #Trending"
- 
+
+    # Shorts description
+    shorts_description = (
+        f"#Shorts #YouTubeShorts\n\n"
+        f"{description[:400]}\n\n"
+        f"#Psychology #DarkPsychology #HumanBehavior #Viral #Trending"
+    )
+
     body = {
         "snippet": {
             "title": f"{title[:80]} #Shorts",
@@ -202,14 +198,14 @@ def upload_short(
             "selfDeclaredMadeForKids": False,
         }
     }
- 
-    media = MediaFileUpload(video_path, mimetype="video/mp4", resumable=True)
+
+    media   = MediaFileUpload(video_path, mimetype="video/mp4", resumable=True)
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
- 
+
     response = None
     while response is None:
         _, response = request.next_chunk()
- 
+
     video_id  = response["id"]
     video_url = f"https://www.youtube.com/shorts/{video_id}"
     print(f"  [YouTube] ✓ Short uploaded: {video_url}", flush=True)

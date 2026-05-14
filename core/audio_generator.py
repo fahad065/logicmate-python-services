@@ -7,6 +7,7 @@ import re
 import subprocess
 from openai import OpenAI
 from core.config import OPENAI_API_KEY
+from core.model_health import get_best_openai_tts_model
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -33,10 +34,7 @@ AUDIO_PROFILES = [
 ]
 
 # TTS model fallback chain
-TTS_MODELS = [
-    "tts-1-hd",   # primary — best quality
-    "tts-1",      # fallback — faster, slightly lower quality
-]
+TTS_MODELS = [get_best_openai_tts_model(), "tts-1"]
 
 # TTS pricing
 TTS_PRICE_PER_CHAR = 0.000015   # $15 per 1M characters (tts-1-hd)

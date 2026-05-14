@@ -8,17 +8,14 @@ import time
 import random
 import requests
 from core.config import ATLAS_API_KEY
+from core.model_health import get_available_atlas_video_models
 
 ATLAS_BASE   = "https://api.atlascloud.ai/api/v1"
 GENERATE_URL = f"{ATLAS_BASE}/model/generateVideo"
 HEADERS      = {"Authorization": f"Bearer {ATLAS_API_KEY}", "Content-Type": "application/json"}
 
 # ── Default model fallback chain — cheapest first ────────────
-VIDEO_MODELS = [
-    "alibaba/wan-2.6/text-to-video",              # primary — ~$0.35/clip
-    "bytedance/seedance-2.0-fast/text-to-video",  # fallback — ~$0.78/clip
-    "alibaba/happyhorse-1.0/text-to-video",       # last resort
-]
+VIDEO_MODELS = get_available_atlas_video_models()
 
 # Atlas pricing per second per model
 ATLAS_PRICE_PER_SEC = {

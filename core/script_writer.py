@@ -5,6 +5,7 @@ Handles YouTube long-form scripts and Instagram/Reels short scripts.
 import json
 from openai import OpenAI
 from core.config import OPENAI_API_KEY
+from core.model_health import get_best_openai_chat_model
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -26,7 +27,7 @@ def generate_youtube_script(niche: str, topic: str) -> tuple[dict, float]:
  
     # Script generation
     resp = client.chat.completions.create(
-        model="gpt-4o",
+        model=get_best_openai_chat_model(),
         messages=[{"role": "user", "content": f"""You are an expert YouTube scriptwriter and SEO specialist. Write a detailed, engaging YouTube video script about "{topic}" in the niche of {niche}.
  
             The script must be 1500-2000 words long to fill a 7-8 minute video. Structure it as:
@@ -108,9 +109,9 @@ Return ONLY valid JSON:
 def generate_topic_ideas(niche: str, count: int = 3, format_type: str = "youtube") -> tuple[list, float]:
     """Generate topic ideas. Returns (topics, cost)."""
     resp = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=get_best_openai_chat_model(),
         messages=[{"role": "user", "content": f"""Generate {count} viral {format_type} video topics for niche: {niche}
-Return ONLY valid JSON: {{"topics": ["topic1", "topic2", ...]}}"""}],
+            Return ONLY valid JSON: {{"topics": ["topic1", "topic2", ...]}}"""}],
         response_format={"type": "json_object"},
         temperature=0.9,
     )

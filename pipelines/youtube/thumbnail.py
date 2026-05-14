@@ -1,7 +1,8 @@
 """
 YouTube thumbnail generator.
-Fallback chain: DALL-E 3 → DALL-E 2 → FFmpeg placeholder
-Creates eye-catching dark psychology thumbnails with bold text overlay.
+Live model detection + fallback chain:
+gpt-image-1 → gpt-image-1-mini → placeholder
+Auto-detects available OpenAI image models via API.
 """
 import os
 import requests
@@ -10,7 +11,57 @@ from core.config import OPENAI_API_KEY
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# Dark psychology thumbnail prompts — MrBeast/top creator style
+# Known OpenAI image models — newest first
+KNOWN_IMAGE_MODELS = [
+    "gpt-image-1",
+    "gpt-image-1-mini",
+    "dall-e-3",
+    "dall-e-2",
+]
+
+_available_models_cache: list[str] = []
+
+
+def get_available_image_models() -> list[str]:
+    """Fetch live list of available OpenAI image models."""
+    global _available_models_cache
+    if _available_models_cache:
+        return _available_models_cache
+
+    try:
+        models = client.models.list()
+        available_ids = {m.id for m in models.data}
+        # Filter to known image models, keeping order (newest first)
+        available = [m for m in KNOWN_IMAGE_MODELS if m in available_ids]
+        if available:
+            _available_models_cache = available
+            print(f"  [Thumbnail] Available image models: {available}", flush=True)
+            return available
+    except Exception as e:
+        print(f"  [Thumbnail] Could not fetch live models: {e}", flush=True)
+
+    # Fallback to trying all known models
+    return KNOWN_IMAGE_MODELS
+
+
+def _get_image_size(model: str) -> str:
+    """Get supported size for each model."""
+    if model in ("gpt-image-1", "gpt-image-1-mini"):
+        return "1536x1024"  # landscape for thumbnails
+    if model == "dall-e-3":
+        return "1792x1024"
+    return "1024x1024"  # dall-e-2
+
+
+def _get_image_quality(model: str) -> str:
+    """Get quality param for each model."""
+    if model in ("gpt-image-1", "gpt-image-1-mini"):
+        return "high"
+    if model == "dall-e-3":
+        return "hd"
+    return "standard"
+
+
 THUMBNAIL_STYLES = {
     "dark":       "cinematic dark background, dramatic spotlight, mysterious hooded figure in shadows, fog atmosphere",
     "psychology": "extreme close-up shocked human face expression, dark dramatic lighting, high contrast",
@@ -21,84 +72,80 @@ THUMBNAIL_STYLES = {
 }
 
 
-def generate_thumbnail(title: str, niche: str, output_path: str) -> str:
-    """Generate eye-catching thumbnail with fallback chain."""
-    methods = [
-        ("DALL-E 3", _dalle3),
-        ("DALL-E 2", _dalle2),
-        ("Placeholder", _placeholder),
-    ]
-
-    for name, method in methods:
-        try:
-            print(f"  [Thumbnail] Trying {name}...", flush=True)
-            result = method(title, niche, output_path)
-            if result and os.path.exists(result) and os.path.getsize(result) > 100:
-                print(f"  [Thumbnail] ✓ Generated with {name}", flush=True)
-                return result
-        except Exception as e:
-            print(f"  [Thumbnail] {name} failed: {e} — trying next...", flush=True)
-
-    return output_path
-
-
 def _get_thumbnail_prompt(title: str, niche: str) -> str:
-    """Get niche-specific dramatic thumbnail prompt."""
     title_lower = title.lower()
     niche_lower = niche.lower()
-
-    # Pick style based on keywords
     style = THUMBNAIL_STYLES["default"]
     for key, prompt in THUMBNAIL_STYLES.items():
         if key in title_lower or key in niche_lower:
             style = prompt
             break
-
     return (
         f"YouTube thumbnail, {style}. "
         f"Professional YouTube thumbnail style like MrBeast or top psychology channels. "
-        f"16:9 widescreen 1280x720. Extremely eye-catching and clickable. "
+        f"16:9 widescreen. Extremely eye-catching and clickable. "
         f"Bold dramatic composition. Dark moody color palette with contrast. "
         f"IMPORTANT: No text, no watermarks, no logos, no borders."
     )
 
 
-def _dalle3(title: str, niche: str, output_path: str) -> str:
-    resp = client.images.generate(
-        model="dall-e-3",
-        prompt=_get_thumbnail_prompt(title, niche),
-        size="1792x1024",
-        quality="hd",
-        style="vivid",
-        n=1,
-    )
-    return _download_and_add_text(resp.data[0].url, title, output_path)
+def generate_thumbnail(title: str, niche: str, output_path: str) -> float:
+    """Generate thumbnail with live model detection + fallback. Returns cost."""
+    models = get_available_image_models()
+    prompt = _get_thumbnail_prompt(title, niche)
 
+    for model in models:
+        try:
+            print(f"  [Thumbnail] Trying {model}...", flush=True)
+            kwargs = {
+                "model": model,
+                "prompt": prompt,
+                "size": _get_image_size(model),
+                "n": 1,
+            }
+            # Add quality param only for supported models
+            if model in ("dall-e-3", "gpt-image-1"):
+                kwargs["quality"] = _get_image_quality(model)
+            if model == "dall-e-3":
+                kwargs["style"] = "vivid"
 
-def _dalle2(title: str, niche: str, output_path: str) -> str:
-    # DALL-E 2 shorter prompt
-    prompt = (
-        f"YouTube thumbnail dark psychology, dramatic cinematic, "
-        f"mysterious atmosphere, high contrast, no text"
-    )
-    resp = client.images.generate(
-        model="dall-e-2",
-        prompt=prompt[:1000],
-        size="1024x1024",
-        n=1,
-    )
-    return _download_and_add_text(resp.data[0].url, title, output_path)
+            resp = client.images.generate(**kwargs)
+            image_url = resp.data[0].url
+
+            if not image_url:
+                raise Exception("No image URL returned")
+
+            result = _download_and_add_text(image_url, title, output_path)
+            if result and os.path.exists(result) and os.path.getsize(result) > 100:
+                print(f"  [Thumbnail] ✓ Generated with {model}", flush=True)
+                # Calculate cost
+                cost_map = {
+                    "gpt-image-1": 0.04,
+                    "gpt-image-1-mini": 0.02,
+                    "dall-e-3": 0.04,
+                    "dall-e-2": 0.02,
+                }
+                return cost_map.get(model, 0.04)
+
+        except Exception as e:
+            print(f"  [Thumbnail] {model} failed: {e} — trying next...", flush=True)
+            # Remove from cache so next run tries next model
+            if model in _available_models_cache:
+                _available_models_cache.remove(model)
+            continue
+
+    # Final fallback — dark placeholder
+    print(f"  [Thumbnail] All models failed — using placeholder", flush=True)
+    _placeholder(title, niche, output_path)
+    return 0.0
 
 
 def _download_and_add_text(image_url: str, title: str, output_path: str) -> str:
-    """Download image, resize to 1280x720 and add bold text overlay."""
     img_resp = requests.get(image_url, timeout=30)
     img_resp.raise_for_status()
-
     try:
         from PIL import Image, ImageDraw, ImageFilter
         from io import BytesIO
-
         img = Image.open(BytesIO(img_resp.content)).convert("RGB")
         img = img.resize((1280, 720), Image.LANCZOS)
         img = _add_bold_text(img, title)
@@ -106,28 +153,19 @@ def _download_and_add_text(image_url: str, title: str, output_path: str) -> str:
     except ImportError:
         with open(output_path, "wb") as f:
             f.write(img_resp.content)
-
     return output_path
 
 
 def _add_bold_text(img, title: str):
-    """Add bold yellow/white text overlay — YouTube thumbnail style."""
-    from PIL import Image, ImageDraw, ImageFont, ImageFilter
-
+    from PIL import Image, ImageDraw, ImageFont
     w, h = img.size
-
-    # Dark gradient overlay at bottom
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
     draw_overlay = ImageDraw.Draw(overlay)
-    # Gradient from transparent to black at bottom 40%
     for y in range(int(h * 0.55), h):
         alpha = int(200 * (y - h * 0.55) / (h * 0.45))
         draw_overlay.line([(0, y), (w, y)], fill=(0, 0, 0, min(alpha, 200)))
     img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
-
     draw = ImageDraw.Draw(img)
-
-    # Wrap title into 2 lines max
     words = title.split()
     lines = []
     current = []
@@ -141,28 +179,19 @@ def _add_bold_text(img, title: str):
     if current:
         lines.append(" ".join(current))
     lines = lines[:2]
-
-    # Large bold font
     font_large = _get_font(72)
     font_small = _get_font(56)
-
     y = h - (len(lines) * 80) - 30
-
     for i, line in enumerate(lines):
         font = font_large if i == 0 else font_small
         bbox = draw.textbbox((0, 0), line, font=font)
         text_w = bbox[2] - bbox[0]
         x = (w - text_w) // 2
-
-        # Bold shadow (multiple offsets for thick shadow)
         for dx, dy in [(-3,-3),(3,-3),(-3,3),(3,3),(0,-3),(0,3),(-3,0),(3,0)]:
             draw.text((x+dx, y+dy), line, font=font, fill=(0, 0, 0))
-
-        # Yellow text (YouTube thumbnail style)
         color = "#FFD700" if i == 0 else "#FFFFFF"
         draw.text((x, y), line, font=font, fill=color)
         y += 85
-
     return img
 
 
@@ -185,7 +214,6 @@ def _get_font(size: int):
 
 
 def _placeholder(title: str, niche: str, output_path: str) -> str:
-    """Dark gradient placeholder — always works."""
     import subprocess
     try:
         subprocess.run([
