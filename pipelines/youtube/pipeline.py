@@ -203,7 +203,10 @@ def run_youtube_pipeline(
                     niche=niche,
                     output_path=thumbnail_path,
                 )
-                cost_tracker["openai_image"] = image_cost or 0.04  # DALL-E ~$0.04
+               try:
+                    cost_tracker["openai_image"] = float(image_cost) if image_cost else 0.04
+                except (TypeError, ValueError):
+                    cost_tracker["openai_image"] = 0.04
                 metadata["thumbnail"] = thumbnail_path
                 save_metadata(folder_path, metadata)
                 append_log(run_id, "  ✓ Thumbnail generated")
