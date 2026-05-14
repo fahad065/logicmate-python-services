@@ -63,7 +63,7 @@ def get_user_credentials(user_id: str) -> Credentials:
     if resp.status_code != 200:
         raise Exception(f"Failed to fetch YouTube tokens ({resp.status_code}): {resp.text[:300]}")
 
-    token_data = resp.json()
+    token_data    = resp.json()
     access_token  = token_data.get("access_token")
     refresh_token = token_data.get("refresh_token")
 
@@ -96,6 +96,49 @@ def _get_youtube_service(user_id: str):
     return build("youtube", "v3", credentials=get_user_credentials(user_id))
 
 
+def _clean_tags(tags: list) -> list:
+    """
+    Sanitize tags for YouTube API:
+    - Strip # prefix
+    - Remove special characters (keep alphanumeric, spaces, hyphens)
+    - Skip empty or too-long tags
+    - Deduplicate case-insensitively
+    """
+    cleaned = []
+    seen = set()
+    for tag in tags:
+        if not isinstance(tag, str):
+            continue
+        # Strip whitespace and # prefix
+        tag = tag.strip().lstrip('#')
+        # Remove special characters except spaces and hyphens
+        tag = ''.join(c for c in tag if c.isalnum() or c in (' ', '-'))
+        tag = tag.strip()
+        # Skip empty, too short, too long, or duplicates
+        if not tag or len(tag) < 2 or len(tag) > 100:
+            continue
+        if tag.lower() in seen:
+            continue
+        seen.add(tag.lower())
+        cleaned.append(tag)
+    return cleaned
+
+
+def _build_final_tags(tags: list, max_chars: int = 490) -> list:
+    """Build final tag list within YouTube's 500 char total limit."""
+    cleaned   = _clean_tags(tags)
+    tag_str   = ""
+    final     = []
+    for tag in cleaned:
+        addition = (", " if tag_str else "") + tag
+        if len(tag_str) + len(addition) <= max_chars:
+            final.append(tag)
+            tag_str += addition
+        else:
+            break
+    return final
+
+
 def upload_to_youtube(
     video_path: str,
     thumbnail_path: str,
@@ -107,32 +150,23 @@ def upload_to_youtube(
     """Upload video to YouTube with full SEO metadata."""
     print(f"  [YouTube] Uploading: {title[:50]}...", flush=True)
 
-    youtube = _get_youtube_service(user_id)
+    youtube    = _get_youtube_service(user_id)
+    final_tags = _build_final_tags(tags)
 
-    # Build tags within 500 char limit
-    tag_str = ""
-    final_tags = []
-    for tag in tags:
-        if len(tag_str) + len(tag) + 2 <= 490:
-            final_tags.append(tag)
-            tag_str += tag + ", "
-        else:
-            break
-
-    print(f"  [YouTube] Using {len(final_tags)} tags ({len(tag_str)} chars)", flush=True)
+    print(f"  [YouTube] Using {len(final_tags)} tags", flush=True)
 
     body = {
         "snippet": {
-            "title": title[:100],
-            "description": description[:5000],
-            "tags": final_tags,
-            "categoryId": "22",
-            "defaultLanguage": "en",
+            "title":                title[:100],
+            "description":          description[:5000],
+            "tags":                 final_tags,
+            "categoryId":           "22",
+            "defaultLanguage":      "en",
             "defaultAudioLanguage": "en",
         },
         "status": {
-            "privacyStatus": "public",
-            "selfDeclaredMadeForKids": False,
+            "privacyStatus":            "public",
+            "selfDeclaredMadeForKids":  False,
         }
     }
 
@@ -175,10 +209,11 @@ def upload_short(
 
     youtube = _get_youtube_service(user_id)
 
-    # Shorts-specific tags
-    shorts_tags = tags[:30] + ["Shorts", "YouTubeShorts", "Short", "Viral", "DarkPsychology"]
+    # Add Shorts-specific tags and clean
+    shorts_raw  = tags[:30] + ["Shorts", "YouTubeShorts", "Short", "Viral", "DarkPsychology"]
+    shorts_tags = _build_final_tags(shorts_raw)
 
-    # Shorts description
+    # Shorts description — #Shorts must appear for YouTube algorithm
     shorts_description = (
         f"#Shorts #YouTubeShorts\n\n"
         f"{description[:400]}\n\n"
@@ -187,14 +222,14 @@ def upload_short(
 
     body = {
         "snippet": {
-            "title": f"{title[:80]} #Shorts",
-            "description": shorts_description,
-            "tags": shorts_tags,
-            "categoryId": "22",
+            "title":           f"{title[:80]} #Shorts",
+            "description":     shorts_description,
+            "tags":            shorts_tags,
+            "categoryId":      "22",
             "defaultLanguage": "en",
         },
         "status": {
-            "privacyStatus": "public",
+            "privacyStatus":           "public",
             "selfDeclaredMadeForKids": False,
         }
     }
