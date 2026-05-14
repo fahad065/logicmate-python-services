@@ -185,7 +185,7 @@ def run_youtube_pipeline(
             append_log(run_id, "[Step 5/9] Assembling final video...")
             update_pipeline_step(run_id, 5, "Assembling video")
 
-            assemble_video(clips, audio_path, final_video, actual_duration)
+            assemble_video(clips, audio_path, final_video, TARGET_DURATION)
             metadata["final_video"] = final_video
             metadata["status"]      = "assembled"
             save_metadata(folder_path, metadata)
@@ -203,7 +203,7 @@ def run_youtube_pipeline(
                     niche=niche,
                     output_path=thumbnail_path,
                 )
-               try:
+                try:
                     cost_tracker["openai_image"] = float(image_cost) if image_cost else 0.04
                 except (TypeError, ValueError):
                     cost_tracker["openai_image"] = 0.04
@@ -214,6 +214,7 @@ def run_youtube_pipeline(
             except Exception as e:
                 log(f"  [Thumbnail] Failed (non-critical): {e}")
                 append_log(run_id, f"  [Thumbnail] Failed (non-critical): {e}")
+                cost_tracker["openai_image"] = 0.04
                 thumbnail_path = None
                 metadata["thumbnail"] = None
                 save_metadata(folder_path, metadata)

@@ -103,58 +103,59 @@ def _get_youtube_service(user_id: str):
 
 def upload_to_youtube(
     video_path: str,
-    thumbnail_path: str | None,
+    thumbnail_path: str,
     title: str,
     description: str,
     tags: list,
     user_id: str,
-    category_id: str = "22",
-    privacy: str = "public",
 ) -> dict:
-    """Upload main video to YouTube."""
+    """Upload video to YouTube with full SEO metadata."""
     print(f"  [YouTube] Uploading: {title[:50]}...", flush=True)
-
-    youtube = _get_youtube_service(user_id)
-
+ 
+    credentials = get_user_credentials(user_id)
+ 
+    youtube = build("youtube", "v3", credentials=credentials)
+ 
+    # Ensure tags are within YouTube limits (500 chars total)
+    tag_str = ""
+    final_tags = []
+    for tag in tags:
+        if len(tag_str) + len(tag) + 2 <= 490:
+            final_tags.append(tag)
+            tag_str += tag + ", "
+        else:
+            break
+ 
+    print(f"  [YouTube] Using {len(final_tags)} tags ({len(tag_str)} chars)", flush=True)
+ 
     body = {
         "snippet": {
             "title": title[:100],
             "description": description[:5000],
-            "tags": tags[:500],
-            "categoryId": category_id,
+            "tags": final_tags,
+            "categoryId": "22",  # People & Blogs
             "defaultLanguage": "en",
+            "defaultAudioLanguage": "en",
         },
         "status": {
-            "privacyStatus": privacy,
+            "privacyStatus": "public",
             "selfDeclaredMadeForKids": False,
-        },
+        }
     }
-
-    media = MediaFileUpload(
-        video_path,
-        mimetype="video/mp4",
-        resumable=True,
-        chunksize=50 * 1024 * 1024,
-    )
-
-    request = youtube.videos().insert(
-        part="snippet,status",
-        body=body,
-        media_body=media,
-    )
-
+ 
+    media = MediaFileUpload(video_path, mimetype="video/mp4", resumable=True, chunksize=5 * 1024 * 1024)
+    request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
+ 
     response = None
     while response is None:
         status, response = request.next_chunk()
         if status:
-            pct = int(status.progress() * 100)
-            if pct % 20 == 0:
-                print(f"  [YouTube] Upload progress: {pct}%", flush=True)
-
+            print(f"  [YouTube] Upload progress: {int(status.progress() * 100)}%", flush=True)
+ 
     video_id  = response["id"]
     video_url = f"https://www.youtube.com/watch?v={video_id}"
     print(f"  [YouTube] ✓ Uploaded: {video_url}", flush=True)
-
+ 
     # Set thumbnail
     if thumbnail_path and os.path.exists(thumbnail_path):
         try:
@@ -164,26 +165,52 @@ def upload_to_youtube(
             ).execute()
             print(f"  [YouTube] ✓ Thumbnail set", flush=True)
         except Exception as e:
-            print(f"  [YouTube] Thumbnail upload failed (non-critical): {e}", flush=True)
-
+            print(f"  [YouTube] Thumbnail failed (non-critical): {e}", flush=True)
+ 
     return {"id": video_id, "url": video_url}
-
-
+ 
+ 
 def upload_short(
     video_path: str,
     title: str,
     description: str,
     tags: list,
     user_id: str,
-    privacy: str = "public",
 ) -> dict:
-    """Upload a YouTube Short."""
-    return upload_to_youtube(
-        video_path=video_path,
-        thumbnail_path=None,
-        title=f"{title[:90]} #Shorts",
-        description=f"{description}\n\n#Shorts #Short",
-        tags=tags + ["Shorts", "Short"],
-        user_id=user_id,
-        privacy=privacy,
-    )
+    """Upload YouTube Short with SEO metadata."""
+    print(f"  [YouTube] Uploading Short: {title[:50]}...", flush=True)
+ 
+    credentials = get_user_credentials(user_id)
+    youtube = build("youtube", "v3", credentials=credentials)
+ 
+    # Add Shorts-specific tags
+    shorts_tags = tags[:30] + ["Shorts", "YouTubeShorts", "Short", "Viral", "DarkPsychology"]
+ 
+    # Shorts description — add #Shorts at start for algorithm
+    shorts_description = f"#Shorts #YouTubeShorts\n\n{description[:400]}\n\n#Psychology #DarkPsychology #HumanBehavior #Viral #Trending"
+ 
+    body = {
+        "snippet": {
+            "title": f"{title[:80]} #Shorts",
+            "description": shorts_description,
+            "tags": shorts_tags,
+            "categoryId": "22",
+            "defaultLanguage": "en",
+        },
+        "status": {
+            "privacyStatus": "public",
+            "selfDeclaredMadeForKids": False,
+        }
+    }
+ 
+    media = MediaFileUpload(video_path, mimetype="video/mp4", resumable=True)
+    request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
+ 
+    response = None
+    while response is None:
+        _, response = request.next_chunk()
+ 
+    video_id  = response["id"]
+    video_url = f"https://www.youtube.com/shorts/{video_id}"
+    print(f"  [YouTube] ✓ Short uploaded: {video_url}", flush=True)
+    return {"id": video_id, "url": video_url}
