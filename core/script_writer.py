@@ -29,7 +29,7 @@ def generate_youtube_script(niche: str, topic: str) -> tuple[dict, float]:
     resp = client.chat.completions.create(
         model=get_best_openai_chat_model(),
         messages=[{"role": "user", "content": f"""You are an expert YouTube scriptwriter and SEO specialist. Write a detailed, engaging YouTube video script about "{topic}" in the niche of {niche}.
- 
+
             The script must be 1500-2000 words long to fill a 7-8 minute video. Structure it as:
             - HOOK (0-30s): Shocking opening that grabs attention immediately
             - INTRO (30s-1min): Brief overview of what viewer will learn
@@ -44,19 +44,13 @@ def generate_youtube_script(niche: str, topic: str) -> tuple[dict, float]:
             - Add relevant hashtags at the end (#DarkPsychology #Psychology #HumanBehavior etc.)
             - Include a call to action (Like, Subscribe, Comment)
             
-            For tags, provide 40-50 SEO-optimized tags covering:
-            - Main topic keywords
-            - Niche keywords  
-            - Related psychology terms
-            - Trending search terms
-            - Long-tail keywords
-            - Channel growth tags
+            For tags, provide 40-50 simple keyword tags. Rules: single words or short phrases only, no hashtags, no special characters, no punctuation, no commas within a single tag. Example: dark psychology, manipulation tactics, human behavior, mind control
             
             Return ONLY valid JSON:
             {{
                 "title": "engaging clickbait YouTube title with numbers or shock value (max 100 chars)",
                 "description": "full 300-word SEO description with timestamps and hashtags",
-                "tags": ["tag1", "tag2", ... at least 40 tags for maximum SEO reach],
+                "tags": ["dark psychology", "manipulation tactics", "human behavior", ...at least 40 clean simple tags],
                 "script": "full narration script (1500-2000 words with all sections)",
                 "thumbnail_text": "short punchy 3-5 word text for thumbnail"
             }}"""}],

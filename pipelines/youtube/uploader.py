@@ -98,41 +98,38 @@ def _get_youtube_service(user_id: str):
 
 def _clean_tags(tags: list) -> list:
     """
-    Sanitize tags for YouTube API:
-    - Strip # prefix
-    - Remove commas (YouTube doesn't allow commas inside tags)
-    - Remove special characters (keep alphanumeric, spaces, hyphens)
-    - Skip empty or too-long tags
-    - Deduplicate case-insensitively
+    Strict YouTube tag sanitization.
+    YouTube only allows: letters, numbers, spaces, hyphens, ampersands
     """
     cleaned = []
     seen = set()
     for tag in tags:
         if not isinstance(tag, str):
             continue
-        # If tag contains comma, split into multiple tags
-        subtags = [t.strip() for t in tag.split(',')]
-        for tag in subtags:
-            # Strip whitespace and # prefix
-            tag = tag.strip().lstrip('#')
-            # Remove ALL special characters except spaces and hyphens
-            tag = ''.join(c for c in tag if c.isalnum() or c in (' ', '-'))
-            tag = tag.strip()
-            # Skip empty, too short, too long, or duplicates
-            if not tag or len(tag) < 2 or len(tag) > 100:
+        # Split on commas first
+        for subtag in tag.split(','):
+            # Strip whitespace, #, quotes, dots
+            subtag = subtag.strip().strip('#').strip('"').strip("'").strip('.')
+            # Keep ONLY alphanumeric, spaces, hyphens, ampersands
+            subtag = ''.join(c for c in subtag if c.isalnum() or c in (' ', '-', '&'))
+            subtag = ' '.join(subtag.split())  # normalize whitespace
+            subtag = subtag.strip()
+            # YouTube tag rules: 2-100 chars, not empty
+            if not subtag or len(subtag) < 2 or len(subtag) > 100:
                 continue
-            if tag.lower() in seen:
+            if subtag.lower() in seen:
                 continue
-            seen.add(tag.lower())
-            cleaned.append(tag)
+            seen.add(subtag.lower())
+            cleaned.append(subtag)
     return cleaned
 
 
 def _build_final_tags(tags: list, max_chars: int = 490) -> list:
-    """Build final tag list within YouTube's 500 char total limit."""
-    cleaned   = _clean_tags(tags)
-    tag_str   = ""
-    final     = []
+    cleaned = _clean_tags(tags)
+    # Debug — print all cleaned tags
+    print(f"  [YouTube] Cleaned tags ({len(cleaned)}): {cleaned[:10]}", flush=True)
+    tag_str = ""
+    final = []
     for tag in cleaned:
         addition = (", " if tag_str else "") + tag
         if len(tag_str) + len(addition) <= max_chars:
@@ -140,8 +137,8 @@ def _build_final_tags(tags: list, max_chars: int = 490) -> list:
             tag_str += addition
         else:
             break
+    print(f"  [YouTube] Final tags ({len(final)}): {final}", flush=True)
     return final
-
 
 def upload_to_youtube(
     video_path: str,
