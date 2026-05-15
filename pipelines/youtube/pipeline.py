@@ -276,6 +276,8 @@ def run_youtube_pipeline(
 
             # Upload shorts
             valid_shorts = [s for s in metadata.get("shorts", []) if s and os.path.exists(s)]
+            print(f"[Debug] Shorts in metadata: {metadata.get('shorts', [])}", flush=True)
+            print(f"[Debug] Valid shorts after filter: {valid_shorts}", flush=True)
             for i, short_path in enumerate(valid_shorts):
                 try:
                     upload_short(
