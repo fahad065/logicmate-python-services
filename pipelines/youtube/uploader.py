@@ -97,24 +97,16 @@ def _get_youtube_service(user_id: str):
 
 
 def _clean_tags(tags: list) -> list:
-    """
-    Strict YouTube tag sanitization.
-    YouTube only allows: letters, numbers, spaces, hyphens, ampersands
-    """
     cleaned = []
     seen = set()
     for tag in tags:
         if not isinstance(tag, str):
             continue
-        # Split on commas first
         for subtag in tag.split(','):
-            # Strip whitespace, #, quotes, dots
-            subtag = subtag.strip().strip('#').strip('"').strip("'").strip('.')
-            # Keep ONLY alphanumeric, spaces, hyphens, ampersands
-            subtag = ''.join(c for c in subtag if c.isalnum() or c in (' ', '-', '&'))
-            subtag = ' '.join(subtag.split())  # normalize whitespace
-            subtag = subtag.strip()
-            # YouTube tag rules: 2-100 chars, not empty
+            subtag = subtag.strip().lstrip('#').strip()
+            # Keep ONLY letters, numbers, spaces — NO hyphens or special chars
+            subtag = ''.join(c for c in subtag if c.isalnum() or c == ' ')
+            subtag = ' '.join(subtag.split()).strip()
             if not subtag or len(subtag) < 2 or len(subtag) > 100:
                 continue
             if subtag.lower() in seen:
@@ -156,17 +148,19 @@ def upload_to_youtube(
 
     print(f"  [YouTube] Using {len(final_tags)} tags", flush=True)
 
+    clean_description = description.replace('<', '').replace('>', '').replace('&', 'and')
+
     body = {
         "snippet": {
-            "title":                title[:100],
-            "description":          description[:5000],
-            "tags":                 final_tags,
-            "categoryId":           "22",
-            "defaultLanguage":      "en",
+            "title": title[:100],
+            "description": clean_description[:5000],
+            "tags": final_tags,
+            "categoryId": "22",
+            "defaultLanguage": "en",
             "defaultAudioLanguage": "en",
         },
         "status": {
-            "privacyStatus":            "public",
+            "privacyStatus": "public",
             "selfDeclaredMadeForKids":  False,
         }
     }
