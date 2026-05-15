@@ -223,7 +223,7 @@ def upload_short(
 
     body = {
         "snippet": {
-            "title":           f"{title[:80]} #Shorts",
+            "title":           f"{title[:75]} #shorts",
             "description":     shorts_description,
             "tags":            shorts_tags,
             "categoryId":      "22",

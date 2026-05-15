@@ -1,7 +1,6 @@
 """
 YouTube thumbnail generator.
-Live model detection + fallback chain:
-gpt-image-1 → gpt-image-1-mini → placeholder
+Live model detection + fallback chain.
 Auto-detects available OpenAI image models via API.
 """
 import os
@@ -13,8 +12,10 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 
 # Known OpenAI image models — newest first
 KNOWN_IMAGE_MODELS = [
+    "gpt-image-2",
     "gpt-image-1",
     "gpt-image-1-mini",
+    "chatgpt-image-latest",
     "dall-e-3",
     "dall-e-2",
 ]
@@ -27,11 +28,9 @@ def get_available_image_models() -> list[str]:
     global _available_models_cache
     if _available_models_cache:
         return _available_models_cache
-
     try:
         models = client.models.list()
         available_ids = {m.id for m in models.data}
-        # Filter to known image models, keeping order (newest first)
         available = [m for m in KNOWN_IMAGE_MODELS if m in available_ids]
         if available:
             _available_models_cache = available
@@ -39,27 +38,34 @@ def get_available_image_models() -> list[str]:
             return available
     except Exception as e:
         print(f"  [Thumbnail] Could not fetch live models: {e}", flush=True)
-
-    # Fallback to trying all known models
     return KNOWN_IMAGE_MODELS
 
 
-def _get_image_size(model: str) -> str:
-    """Get supported size for each model."""
-    if model in ("gpt-image-1", "gpt-image-1-mini"):
-        return "1536x1024"  # landscape for thumbnails
+def _get_image_kwargs(model: str, prompt: str) -> dict:
+    """Build API kwargs for each model."""
+    base = {"model": model, "prompt": prompt, "n": 1}
+
+    if model in ("gpt-image-2", "gpt-image-1", "gpt-image-1-mini",
+                 "gpt-image-1.5", "chatgpt-image-latest"):
+        return {**base, "size": "1536x1024", "quality": "high"}
+
     if model == "dall-e-3":
-        return "1792x1024"
-    return "1024x1024"  # dall-e-2
+        return {**base, "size": "1792x1024", "quality": "hd", "style": "vivid"}
+
+    # dall-e-2 fallback
+    return {**base, "size": "1024x1024"}
 
 
-def _get_image_quality(model: str) -> str:
-    """Get quality param for each model."""
-    if model in ("gpt-image-1", "gpt-image-1-mini"):
-        return "high"
-    if model == "dall-e-3":
-        return "hd"
-    return "standard"
+def _get_cost(model: str) -> float:
+    cost_map = {
+        "gpt-image-2":          0.04,
+        "gpt-image-1":          0.04,
+        "gpt-image-1-mini":     0.02,
+        "chatgpt-image-latest": 0.04,
+        "dall-e-3":             0.04,
+        "dall-e-2":             0.02,
+    }
+    return cost_map.get(model, 0.04)
 
 
 THUMBNAIL_STYLES = {
@@ -97,18 +103,7 @@ def generate_thumbnail(title: str, niche: str, output_path: str) -> float:
     for model in models:
         try:
             print(f"  [Thumbnail] Trying {model}...", flush=True)
-            kwargs = {
-                "model": model,
-                "prompt": prompt,
-                "size": _get_image_size(model),
-                "n": 1,
-            }
-            # Add quality param only for supported models
-            if model in ("dall-e-3", "gpt-image-1"):
-                kwargs["quality"] = _get_image_quality(model)
-            if model == "dall-e-3":
-                kwargs["style"] = "vivid"
-
+            kwargs = _get_image_kwargs(model, prompt)
             resp = client.images.generate(**kwargs)
             image_url = resp.data[0].url
 
@@ -118,33 +113,24 @@ def generate_thumbnail(title: str, niche: str, output_path: str) -> float:
             result = _download_and_add_text(image_url, title, output_path)
             if result and os.path.exists(result) and os.path.getsize(result) > 100:
                 print(f"  [Thumbnail] ✓ Generated with {model}", flush=True)
-                # Calculate cost
-                cost_map = {
-                    "gpt-image-1": 0.04,
-                    "gpt-image-1-mini": 0.02,
-                    "dall-e-3": 0.04,
-                    "dall-e-2": 0.02,
-                }
-                return cost_map.get(model, 0.04)
+                return _get_cost(model)
 
         except Exception as e:
             print(f"  [Thumbnail] {model} failed: {e} — trying next...", flush=True)
-            # Remove from cache so next run tries next model
             if model in _available_models_cache:
                 _available_models_cache.remove(model)
             continue
 
-    # Final fallback — dark placeholder
     print(f"  [Thumbnail] All models failed — using placeholder", flush=True)
     _placeholder(title, niche, output_path)
     return 0.0
 
 
 def _download_and_add_text(image_url: str, title: str, output_path: str) -> str:
-    img_resp = requests.get(image_url, timeout=30)
+    img_resp = requests.get(image_url, timeout=60)
     img_resp.raise_for_status()
     try:
-        from PIL import Image, ImageDraw, ImageFilter
+        from PIL import Image
         from io import BytesIO
         img = Image.open(BytesIO(img_resp.content)).convert("RGB")
         img = img.resize((1280, 720), Image.LANCZOS)
@@ -157,7 +143,7 @@ def _download_and_add_text(image_url: str, title: str, output_path: str) -> str:
 
 
 def _add_bold_text(img, title: str):
-    from PIL import Image, ImageDraw, ImageFont
+    from PIL import Image, ImageDraw
     w, h = img.size
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
     draw_overlay = ImageDraw.Draw(overlay)
