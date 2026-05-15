@@ -235,7 +235,7 @@ def upload_short(
         }
     }
 
-    media   = MediaFileUpload(video_path, mimetype="video/mp4", resumable=True)
+    media = MediaFileUpload(video_path, mimetype="video/mp4", resumable=False)
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
 
     response = None

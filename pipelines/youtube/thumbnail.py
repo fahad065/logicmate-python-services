@@ -44,15 +44,11 @@ def get_available_image_models() -> list[str]:
 def _get_image_kwargs(model: str, prompt: str) -> dict:
     """Build API kwargs for each model."""
     base = {"model": model, "prompt": prompt, "n": 1}
-
     if model in ("gpt-image-2", "gpt-image-1", "gpt-image-1-mini",
                  "gpt-image-1.5", "chatgpt-image-latest"):
         return {**base, "size": "1536x1024", "quality": "high"}
-
     if model == "dall-e-3":
         return {**base, "size": "1792x1024", "quality": "hd", "style": "vivid"}
-
-    # dall-e-2 fallback
     return {**base, "size": "1024x1024"}
 
 
@@ -95,51 +91,22 @@ def _get_thumbnail_prompt(title: str, niche: str) -> str:
     )
 
 
-def generate_thumbnail(title: str, niche: str, output_path: str) -> float:
-    """Generate thumbnail with live model detection + fallback. Returns cost."""
-    models = get_available_image_models()
-    prompt = _get_thumbnail_prompt(title, niche)
-
-    for model in models:
-        try:
-            print(f"  [Thumbnail] Trying {model}...", flush=True)
-            kwargs = _get_image_kwargs(model, prompt)
-            resp = client.images.generate(**kwargs)
-            image_url = resp.data[0].url
-
-            if not image_url:
-                raise Exception("No image URL returned")
-
-            result = _download_and_add_text(image_url, title, output_path)
-            if result and os.path.exists(result) and os.path.getsize(result) > 100:
-                print(f"  [Thumbnail] ✓ Generated with {model}", flush=True)
-                return _get_cost(model)
-
-        except Exception as e:
-            print(f"  [Thumbnail] {model} failed: {e} — trying next...", flush=True)
-            if model in _available_models_cache:
-                _available_models_cache.remove(model)
-            continue
-
-    print(f"  [Thumbnail] All models failed — using placeholder", flush=True)
-    _placeholder(title, niche, output_path)
-    return 0.0
-
-
-def _download_and_add_text(image_url: str, title: str, output_path: str) -> str:
-    img_resp = requests.get(image_url, timeout=60)
-    img_resp.raise_for_status()
-    try:
-        from PIL import Image
-        from io import BytesIO
-        img = Image.open(BytesIO(img_resp.content)).convert("RGB")
-        img = img.resize((1280, 720), Image.LANCZOS)
-        img = _add_bold_text(img, title)
-        img.save(output_path, "JPEG", quality=95)
-    except ImportError:
-        with open(output_path, "wb") as f:
-            f.write(img_resp.content)
-    return output_path
+def _get_font(size: int):
+    from PIL import ImageFont
+    candidates = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/usr/share/fonts/truetype/ubuntu/Ubuntu-Bold.ttf",
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, size)
+            except Exception:
+                continue
+    return ImageFont.load_default()
 
 
 def _add_bold_text(img, title: str):
@@ -181,22 +148,86 @@ def _add_bold_text(img, title: str):
     return img
 
 
-def _get_font(size: int):
-    from PIL import ImageFont
-    candidates = [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-        "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
-        "/System/Library/Fonts/Helvetica.ttc",
-        "/usr/share/fonts/truetype/ubuntu/Ubuntu-Bold.ttf",
-    ]
-    for path in candidates:
-        if os.path.exists(path):
-            try:
-                return ImageFont.truetype(path, size)
-            except Exception:
-                continue
-    return ImageFont.load_default()
+def _add_text_to_saved_image(image_path: str, title: str) -> str:
+    """Add text overlay to already-saved image file."""
+    try:
+        from PIL import Image
+        img = Image.open(image_path).convert("RGB")
+        img = img.resize((1280, 720), Image.LANCZOS)
+        img = _add_bold_text(img, title)
+        img.save(image_path, "JPEG", quality=95)
+    except Exception as e:
+        print(f"  [Thumbnail] Text overlay failed: {e}", flush=True)
+    return image_path
+
+
+def _download_and_add_text(image_url: str, title: str, output_path: str) -> str:
+    img_resp = requests.get(image_url, timeout=60)
+    img_resp.raise_for_status()
+    try:
+        from PIL import Image
+        from io import BytesIO
+        img = Image.open(BytesIO(img_resp.content)).convert("RGB")
+        img = img.resize((1280, 720), Image.LANCZOS)
+        img = _add_bold_text(img, title)
+        img.save(output_path, "JPEG", quality=95)
+    except ImportError:
+        with open(output_path, "wb") as f:
+            f.write(img_resp.content)
+    return output_path
+
+
+def generate_thumbnail(title: str, niche: str, output_path: str) -> float:
+    """Generate thumbnail with live model detection + fallback. Returns cost."""
+    models = get_available_image_models()
+    prompt = _get_thumbnail_prompt(title, niche)
+
+    for model in models:
+        try:
+            print(f"  [Thumbnail] Trying {model}...", flush=True)
+            kwargs = _get_image_kwargs(model, prompt)
+            resp = client.images.generate(**kwargs)
+            image_data = resp.data[0]
+
+            # Handle b64_json response (gpt-image-2, gpt-image-1 etc)
+            if hasattr(image_data, 'b64_json') and image_data.b64_json:
+                import base64
+                raw = base64.b64decode(image_data.b64_json)
+                temp_path = output_path + ".tmp.png"
+                with open(temp_path, 'wb') as f:
+                    f.write(raw)
+                try:
+                    from PIL import Image
+                    from io import BytesIO
+                    img = Image.open(temp_path).convert("RGB")
+                    img = img.resize((1280, 720), Image.LANCZOS)
+                    img = _add_bold_text(img, title)
+                    img.save(output_path, "JPEG", quality=95)
+                    os.remove(temp_path)
+                except Exception:
+                    os.rename(temp_path, output_path)
+                print(f"  [Thumbnail] ✓ Generated with {model} (b64)", flush=True)
+                return _get_cost(model)
+
+            # Handle URL response (dall-e-3 etc)
+            elif hasattr(image_data, 'url') and image_data.url:
+                result = _download_and_add_text(image_data.url, title, output_path)
+                if result and os.path.exists(result) and os.path.getsize(result) > 100:
+                    print(f"  [Thumbnail] ✓ Generated with {model}", flush=True)
+                    return _get_cost(model)
+
+            else:
+                raise Exception("No image URL or b64_json returned")
+
+        except Exception as e:
+            print(f"  [Thumbnail] {model} failed: {e} — trying next...", flush=True)
+            if model in _available_models_cache:
+                _available_models_cache.remove(model)
+            continue
+
+    print(f"  [Thumbnail] All models failed — using placeholder", flush=True)
+    _placeholder(title, niche, output_path)
+    return 0.0
 
 
 def _placeholder(title: str, niche: str, output_path: str) -> str:
