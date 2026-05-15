@@ -77,7 +77,9 @@ def create_shorts(
         "ffprobe", "-v", "quiet", "-print_format", "json",
         "-show_format", main_video_path
     ], capture_output=True, text=True, timeout=30)
-    duration = float(json.loads(result.stdout).get("format", {}).get("duration", 180))
+    duration = float(json.loads(result.stdout).get("format", {}).get("duration", 420))
+
+    print(f"[Assembler] Video duration: {duration:.1f}s", flush=True)
 
     short_duration = 45
 
@@ -89,39 +91,54 @@ def create_shorts(
 
     for i in range(num_shorts):
         start_time = int(i * segment)
-        actual_duration = min(short_duration, int(duration - start_time - 1))
+        actual_duration = min(short_duration, int(duration - start_time - 2))
+
         if actual_duration < 20:
-            print(f"[Assembler] Short {i+1} skipped — not enough video left", flush=True)
+            print(f"[Assembler] Short {i+1} skipped — not enough video left ({actual_duration}s)", flush=True)
             continue
 
         output_path = os.path.join(output_dir, f"short_{i+1}.mp4")
 
+        print(f"[Assembler] Short {i+1}: start={start_time}s duration={actual_duration}s", flush=True)
+
         try:
-            subprocess.run([
+            result = subprocess.run([
                 "ffmpeg", "-y",
-                "-ss", str(start_time),
+                "-ss", str(start_time),   # seek video to start_time
                 "-i", main_video_path,
+                "-ss", str(start_time),   # seek audio to start_time
                 "-i", audio_path,
-                "-map", "0:v:0", "-map", "1:a:0",
-                "-ss", str(start_time),
+                "-map", "0:v:0",
+                "-map", "1:a:0",
                 "-t", str(actual_duration),
                 "-vf", "crop=ih*9/16:ih,scale=1080:1920",
                 "-c:v", "libx264", "-preset", "ultrafast",
                 "-crf", "28",
                 "-b:v", "800k",
                 "-c:a", "aac", "-b:a", "96k",
-                "-threads", "1",
+                "-threads", "2",
                 output_path
-            ], check=True, capture_output=True, timeout=120)
+            ], capture_output=True, timeout=180)
+
+            # Check ffmpeg exit code
+            if result.returncode != 0:
+                stderr = result.stderr.decode()[:300]
+                print(f"[Assembler] Short {i+1} ffmpeg error: {stderr}", flush=True)
+                continue
 
             # Verify file exists and has content
             if os.path.exists(output_path) and os.path.getsize(output_path) > 10000:
                 shorts.append(output_path)
-                print(f"[Assembler] ✓ Short {i+1} created ({actual_duration}s)", flush=True)
+                print(f"[Assembler] ✓ Short {i+1} created ({actual_duration}s, {os.path.getsize(output_path)//1024}KB)", flush=True)
             else:
-                print(f"[Assembler] Short {i+1} file empty/missing — skipping", flush=True)
+                size = os.path.getsize(output_path) if os.path.exists(output_path) else 0
+                stderr = result.stderr.decode()[:200]
+                print(f"[Assembler] Short {i+1} file too small ({size} bytes): {stderr}", flush=True)
 
+        except subprocess.TimeoutExpired:
+            print(f"[Assembler] Short {i+1} timed out after 180s", flush=True)
         except Exception as e:
             print(f"[Assembler] Short {i+1} failed: {e}", flush=True)
 
+    print(f"[Assembler] ✓ Created {len(shorts)}/{num_shorts} shorts", flush=True)
     return shorts
