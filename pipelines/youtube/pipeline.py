@@ -73,6 +73,14 @@ def run_youtube_pipeline(
         if folder_path:
             log(f"[Resume] Resuming: {folder_path}")
             metadata = load_metadata(folder_path)
+
+            # ← ADD THIS: clear stale shorts from metadata if files missing
+            if metadata.get("shorts"):
+                valid = [s for s in metadata["shorts"] if s and os.path.exists(s)]
+                if len(valid) != len(metadata["shorts"]):
+                    print(f"[Resume] Clearing stale shorts from metadata", flush=True)
+                    metadata["shorts"] = []
+                    save_metadata(folder_path, metadata)
         else:
             folder_path = create_run_folder(OUTPUT_BASE, "youtube", user_id)
             metadata = {

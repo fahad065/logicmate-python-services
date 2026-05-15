@@ -57,7 +57,7 @@ def find_resumable_folder(base_dir: str, pipeline_type: str, user_id: str) -> st
             with open(meta_path) as f:
                 meta = json.load(f)
             status = meta.get("status", "")
-            if status in ("uploaded", "complete", "failed", "success"):
+            if status in ("uploaded", "complete", "failed", "success", "shorts_done"):
                 continue
         except Exception:
             continue
