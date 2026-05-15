@@ -44,14 +44,13 @@ def assemble_video(
     # Mix with audio — trim to exact target_duration
     subprocess.run([
         "ffmpeg", "-y",
-        "-i", concat_output,
-        "-i", audio_path,
+        "-stream_loop", "-1", "-i", concat_output,   # loop video
+        "-stream_loop", "-1", "-i", audio_path,       # loop audio
         "-map", "0:v:0", "-map", "1:a:0",
         "-t", str(target_duration),
         "-c:v", "libx264", "-preset", "ultrafast",
         "-crf", "23",
         "-c:a", "aac", "-b:a", "192k",
-        "-shortest",  # ← stop when audio ends
         output_path
     ], capture_output=True, check=True)
  

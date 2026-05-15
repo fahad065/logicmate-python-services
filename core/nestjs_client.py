@@ -5,7 +5,11 @@ import os
 import requests
 from typing import Optional
 
-NESTJS_BASE = os.getenv("NESTJS_API_URL", "https://api.logicmate.io")
+NESTJS_BASE = (
+    os.getenv("NESTJS_API_URL") or 
+    os.getenv("NESTJS_URL") or 
+    "https://api.logicmate.io/api/v1"
+)
 API_SECRET  = os.getenv("PIPELINE_SECRET", "")
 
 HEADERS = {
