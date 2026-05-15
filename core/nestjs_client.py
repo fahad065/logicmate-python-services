@@ -104,7 +104,7 @@ def notify_complete(
         requests.post(
             f"{NESTJS_BASE}/pipeline-runs/{run_id}/notify-complete",
             json={"userId": user_id, "title": title, "youtubeUrl": youtube_url},
-            headers=HEADERS, timeout=10,
+            headers=HEADERS, timeout=30,
         )
     except Exception as e:
         print(f"[NestJS] notify_complete failed: {e}", flush=True)
@@ -116,7 +116,7 @@ def notify_failed(run_id: str, user_id: str, error: str) -> None:
         requests.post(
             f"{NESTJS_BASE}/pipeline-runs/{run_id}/notify-failed",
             json={"userId": user_id, "error": error[:300]},
-            headers=HEADERS, timeout=10,
+            headers=HEADERS, timeout=30,
         )
     except Exception as e:
         print(f"[NestJS] notify_failed failed: {e}", flush=True)

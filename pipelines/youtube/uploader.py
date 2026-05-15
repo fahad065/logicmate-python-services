@@ -100,6 +100,7 @@ def _clean_tags(tags: list) -> list:
     """
     Sanitize tags for YouTube API:
     - Strip # prefix
+    - Remove commas (YouTube doesn't allow commas inside tags)
     - Remove special characters (keep alphanumeric, spaces, hyphens)
     - Skip empty or too-long tags
     - Deduplicate case-insensitively
@@ -109,18 +110,21 @@ def _clean_tags(tags: list) -> list:
     for tag in tags:
         if not isinstance(tag, str):
             continue
-        # Strip whitespace and # prefix
-        tag = tag.strip().lstrip('#')
-        # Remove special characters except spaces and hyphens
-        tag = ''.join(c for c in tag if c.isalnum() or c in (' ', '-'))
-        tag = tag.strip()
-        # Skip empty, too short, too long, or duplicates
-        if not tag or len(tag) < 2 or len(tag) > 100:
-            continue
-        if tag.lower() in seen:
-            continue
-        seen.add(tag.lower())
-        cleaned.append(tag)
+        # If tag contains comma, split into multiple tags
+        subtags = [t.strip() for t in tag.split(',')]
+        for tag in subtags:
+            # Strip whitespace and # prefix
+            tag = tag.strip().lstrip('#')
+            # Remove ALL special characters except spaces and hyphens
+            tag = ''.join(c for c in tag if c.isalnum() or c in (' ', '-'))
+            tag = tag.strip()
+            # Skip empty, too short, too long, or duplicates
+            if not tag or len(tag) < 2 or len(tag) > 100:
+                continue
+            if tag.lower() in seen:
+                continue
+            seen.add(tag.lower())
+            cleaned.append(tag)
     return cleaned
 
 
