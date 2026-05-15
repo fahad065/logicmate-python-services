@@ -1,7 +1,8 @@
 """
 Atlas Cloud video clip generator.
-Wan 2.6 as primary (cheapest), Seedance 2.0 Fast as fallback.
+Wan 2.6 as primary (cheapest), Seedance as fallback.
 Supports preferred_model selection from frontend.
+Live model detection via model_health.py
 """
 import os
 import time
@@ -19,12 +20,19 @@ VIDEO_MODELS = get_available_atlas_video_models()
 
 # Atlas pricing per second per model
 ATLAS_PRICE_PER_SEC = {
-    "alibaba/wan-2.6/text-to-video":              0.07,   # $0.35 for 5s
+    "alibaba/wan-2.6/text-to-video":              0.07,
     "alibaba/happyhorse-1.0/text-to-video":       0.07,
-    "bytedance/seedance-2.0-fast/text-to-video":  0.156,  # $0.78 for 5s
-    "bytedance/seedance-2.0/text-to-video":       0.194,  # $0.97 for 5s
-    "auto":                                        0.07,   # default cheapest
+    "bytedance/seedance-2.0-fast/text-to-video":  0.156,
+    "bytedance/seedance-2.0/text-to-video":       0.194,
+    "auto":                                        0.07,
 }
+
+# ── Per-model max duration ────────────────────────────────────
+def _get_max_duration(model: str) -> int:
+    """Get max duration supported by each model."""
+    if "wan" in model or "happyhorse" in model:
+        return 5   # Wan 2.6 supports up to 5s
+    return 3       # Seedance models max 3s
 
 # ── Dark Psychology scene prompts ─────────────────────────────
 DARK_PSYCH_SCENES = [
@@ -58,14 +66,13 @@ ABSTRACT_SCENES = [
     "binary code rain forming human face, dark Matrix-style, cinematic 4K",
 ]
 
+
 def get_clip_cost(model: str, duration: int) -> float:
-    """Calculate exact clip cost based on model and duration."""
     price_per_sec = ATLAS_PRICE_PER_SEC.get(model, 0.07)
     return round(price_per_sec * duration, 4)
 
 
 def get_scene_prompts(niche: str, count: int, aspect_ratio: str = "16:9") -> list[str]:
-    """Generate varied cinematic dark psychology scene prompts."""
     suffix = "widescreen 16:9, no text overlay, no watermark, no logos, photorealistic"
     all_prompts = DARK_PSYCH_SCENES + ABSTRACT_SCENES
     random.shuffle(all_prompts)
@@ -74,12 +81,15 @@ def get_scene_prompts(niche: str, count: int, aspect_ratio: str = "16:9") -> lis
 
 def _generate_clip_with_model(model: str, prompt: str, duration: int) -> dict:
     """Try to generate clip with specific model."""
+    # Respect per-model duration limits
+    actual_duration = min(duration, _get_max_duration(model))
+
     payload = {
         "model": model,
         "prompt": prompt,
         "width": 1920,
         "height": 1080,
-        "duration": min(duration, 3),  # cap at 3s to control cost
+        "duration": actual_duration,
         "fps": 24,
     }
 
@@ -95,41 +105,48 @@ def _generate_clip_with_model(model: str, prompt: str, duration: int) -> dict:
         raise Exception(f"No prediction_id: {resp.text[:200]}")
 
     poll_url = f"{ATLAS_BASE}/model/prediction/{prediction_id}"
-    return {"prediction_id": prediction_id, "poll_url": poll_url}
+    return {"prediction_id": prediction_id, "poll_url": poll_url, "duration": actual_duration}
 
 
 def _poll_for_result(poll_url: str, max_attempts: int = 40) -> str:
     """Poll until clip is ready. Returns video URL."""
     for attempt in range(max_attempts):
         time.sleep(15)
-        poll = requests.get(poll_url, headers=HEADERS, timeout=20)
-        data = poll.json()
-        inner = data.get("data", data)
-        status = inner.get("status", "")
+        try:
+            poll = requests.get(poll_url, headers=HEADERS, timeout=20)
+            data = poll.json()
+            inner = data.get("data", data)
+            status = inner.get("status", "")
 
-        if attempt % 2 == 0:
-            print(f"  [Seedance] Attempt {attempt+1}/{max_attempts} status: {status}", flush=True)
+            if attempt % 2 == 0:
+                print(f"  [Seedance] Attempt {attempt+1}/{max_attempts} status: {status}", flush=True)
 
-        if status in ("succeeded", "success", "completed"):
-            outputs = inner.get("outputs")
-            if isinstance(outputs, list) and outputs:
-                return outputs[0]
-            video_url = inner.get("output") or inner.get("video_url")
-            if video_url:
-                return video_url
-            raise Exception(f"No video URL in response: {inner}")
+            if status in ("succeeded", "success", "completed"):
+                outputs = inner.get("outputs")
+                if isinstance(outputs, list) and outputs:
+                    return outputs[0]
+                video_url = inner.get("output") or inner.get("video_url")
+                if video_url:
+                    return video_url
+                raise Exception(f"No video URL in response: {inner}")
 
-        elif status == "failed":
-            raise Exception(f"Generation failed: {inner.get('error', 'unknown')}")
+            elif status == "failed":
+                raise Exception(f"Generation failed: {inner.get('error', 'unknown')}")
+
+            # Early exit if stuck too long
+            elif status == "processing" and attempt >= 20:
+                raise Exception(f"Stuck in processing after {attempt+1} attempts — trying next model")
+
+        except requests.exceptions.RequestException as e:
+            print(f"  [Seedance] Poll request failed: {e}", flush=True)
+            continue
 
     raise Exception(f"Timed out after {max_attempts * 15 / 60:.0f} minutes")
 
 
 def _build_model_list(preferred_model: str) -> list[str]:
-    """Build model list with preferred model first, rest as fallback."""
     if not preferred_model or preferred_model == "auto":
         return VIDEO_MODELS
-    # Put preferred first, then rest as fallback
     rest = [m for m in VIDEO_MODELS if m != preferred_model]
     return [preferred_model] + rest
 
@@ -142,26 +159,27 @@ def generate_clip(
 ) -> tuple[str, float]:
     """Generate single clip. Returns (output_path, cost)."""
     model_list = _build_model_list(preferred_model)
- 
+
     for model in model_list:
         try:
             print(f"  [Seedance] Generating with {model.split('/')[1]}...", flush=True)
             result = _generate_clip_with_model(model, prompt, duration)
             video_url = _poll_for_result(result["poll_url"])
- 
+
             video_resp = requests.get(video_url, timeout=120)
             video_resp.raise_for_status()
             with open(output_path, "wb") as f:
                 f.write(video_resp.content)
- 
-            cost = get_clip_cost(model, duration)
+
+            actual_duration = result.get("duration", duration)
+            cost = get_clip_cost(model, actual_duration)
             print(f"  [Seedance] ✓ Saved to {output_path} (cost: ${cost})", flush=True)
             return output_path, cost
- 
+
         except Exception as e:
             print(f"  [Seedance] {model} failed: {e} — trying next...", flush=True)
             continue
- 
+
     raise Exception(f"All video models failed for prompt: {prompt[:50]}")
 
 
@@ -176,13 +194,13 @@ def generate_clips_batch(
     os.makedirs(output_dir, exist_ok=True)
     clips = []
     total_cost = 0.0
- 
+
     for i, prompt in enumerate(prompts):
         short_prompt = prompt[:80] + "..." if len(prompt) > 80 else prompt
         print(f"  [Seedance] Clip {i+1}/{len(prompts)}: {short_prompt}", flush=True)
- 
+
         output_path = os.path.join(output_dir, f"clip_{i:03d}.mp4")
- 
+
         if os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
             print(f"  [Seedance] ✓ Resuming — clip {i} already exists", flush=True)
             clips.append(output_path)
@@ -191,14 +209,14 @@ def generate_clips_batch(
                 duration
             )
             continue
- 
+
         try:
             clip, cost = generate_clip(prompt, output_path, duration, preferred_model)
             clips.append(clip)
             total_cost += cost
         except Exception as e:
             print(f"  [Seedance] Clip {i} failed all models: {e} — skipping", flush=True)
- 
+
     print(f"  [Seedance] ✓ {len(clips)} clips, Atlas cost: ${total_cost:.4f}", flush=True)
     return clips, total_cost
 
@@ -216,10 +234,9 @@ def expand_custom_prompt(custom_prompt: str, count: int) -> list[str]:
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": f"""Create {count} cinematic video clip descriptions based on:
-            "{custom_prompt}"
-
-            Requirements: distinct camera angles, cinematic, no text, 16:9 widescreen.
-            Return ONLY valid JSON: {{"prompts": ["description 1", ...]}}"""}],
+"{custom_prompt}"
+Requirements: distinct camera angles, cinematic, no text, 16:9 widescreen.
+Return ONLY valid JSON: {{"prompts": ["description 1", ...]}}"""}],
             response_format={"type": "json_object"},
             temperature=0.8,
         )
