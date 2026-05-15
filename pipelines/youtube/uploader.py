@@ -223,14 +223,14 @@ def upload_short(
 
     body = {
         "snippet": {
-            "title":           f"{title[:75]} #shorts",
-            "description":     shorts_description,
-            "tags":            shorts_tags,
-            "categoryId":      "22",
+            "title": f"#Shorts {title[:75]}",
+            "description": shorts_description,
+            "tags": shorts_tags,
+            "categoryId": "22",
             "defaultLanguage": "en",
         },
         "status": {
-            "privacyStatus":           "public",
+            "privacyStatus": "public",
             "selfDeclaredMadeForKids": False,
         }
     }
