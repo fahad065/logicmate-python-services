@@ -74,11 +74,11 @@ def run_youtube_pipeline(
             log(f"[Resume] Resuming: {folder_path}")
             metadata = load_metadata(folder_path)
 
-            # ← ADD THIS: clear stale shorts from metadata if files missing
+            # Clear stale shorts from metadata if files missing
             if metadata.get("shorts"):
                 valid = [s for s in metadata["shorts"] if s and os.path.exists(s)]
                 if len(valid) != len(metadata["shorts"]):
-                    print(f"[Resume] Clearing stale shorts from metadata", flush=True)
+                    print(f"[Resume] Clearing stale shorts — {len(metadata['shorts'])} in metadata, {len(valid)} exist on disk", flush=True)
                     metadata["shorts"] = []
                     save_metadata(folder_path, metadata)
         else:
@@ -274,11 +274,25 @@ def run_youtube_pipeline(
             append_log(run_id, f"  ✓ Uploaded: {yt_result['url']}")
             log(f"  ✓ Uploaded: {yt_result['url']}")
 
-            # Upload shorts
-            valid_shorts = [s for s in metadata.get("shorts", []) if s and os.path.exists(s)]
-            print(f"[Debug] Shorts in metadata: {metadata.get('shorts', [])}", flush=True)
-            print(f"[Debug] Valid shorts after filter: {valid_shorts}", flush=True)
-            for i, short_path in enumerate(valid_shorts):
+            # Upload shorts — check each file exists at moment of upload
+            shorts_list = metadata.get("shorts", [])
+            print(f"[Shorts] Total in metadata: {len(shorts_list)}", flush=True)
+            uploaded_count = 0
+            for i, short_path in enumerate(shorts_list):
+                # Verify file exists and is valid right before upload
+                if not short_path:
+                    print(f"[Short {i+1}] Skipped — path is None", flush=True)
+                    continue
+                if not os.path.exists(short_path):
+                    print(f"[Short {i+1}] Skipped — file missing: {short_path}", flush=True)
+                    append_log(run_id, f"  [Short {i+1}] Skipped — file missing")
+                    continue
+                file_size = os.path.getsize(short_path)
+                if file_size < 1000:
+                    print(f"[Short {i+1}] Skipped — file too small: {file_size} bytes", flush=True)
+                    continue
+
+                print(f"[Short {i+1}] Uploading: {short_path} ({file_size//1024}KB)", flush=True)
                 try:
                     upload_short(
                         video_path=short_path,
@@ -289,9 +303,12 @@ def run_youtube_pipeline(
                     )
                     append_log(run_id, f"  ✓ Short {i+1} uploaded")
                     log(f"  ✓ Short {i+1} uploaded")
+                    uploaded_count += 1
                 except Exception as e:
                     log(f"  [Short {i+1}] Upload failed (non-critical): {e}")
                     append_log(run_id, f"  [Short {i+1}] Upload failed: {e}")
+
+            print(f"[Shorts] ✓ Uploaded {uploaded_count}/{len(shorts_list)}", flush=True)
 
         # ── Step 9: Notify + Complete ─────────────────────────
         log("\n[Step 9/9] Notifying...")
