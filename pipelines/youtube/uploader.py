@@ -206,6 +206,11 @@ def upload_short(
     user_id: str,
 ) -> dict:
     """Upload YouTube Short with SEO metadata."""
+    # ← Add this check at the very start:
+    if not video_path or not os.path.exists(video_path):
+        raise Exception(f"Short file not found: {video_path}")
+    if os.path.getsize(video_path) < 1000:
+        raise Exception(f"Short file too small: {video_path}")
     print(f"  [YouTube] Uploading Short: {title[:50]}...", flush=True)
 
     youtube = _get_youtube_service(user_id)

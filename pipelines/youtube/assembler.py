@@ -11,27 +11,27 @@ def assemble_video(
     clip_paths: list[str],
     audio_path: str,
     output_path: str,
-    target_duration: int = 420,  # ← default 7 min
+    target_duration: int = 420,
 ) -> str:
     """Assemble clips + audio into final video."""
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
- 
+
     # Loop clips to fill target duration
     total_clip_duration = len(clip_paths) * 5
     looped_clips = list(clip_paths)
- 
+
     while total_clip_duration < target_duration + 5:
         looped_clips.extend(clip_paths)
         total_clip_duration += len(clip_paths) * 5
- 
+
     print(f"  [Assembler] {len(looped_clips)} clips → {target_duration}s video", flush=True)
- 
+
     # Create concat file
     concat_file = output_path.replace(".mp4", "_concat.txt")
     with open(concat_file, "w") as f:
         for clip in looped_clips:
             f.write(f"file '{clip}'\n")
- 
+
     # Concat clips
     concat_output = output_path.replace(".mp4", "_concat.mp4")
     subprocess.run([
@@ -40,12 +40,12 @@ def assemble_video(
         "-c", "copy",
         concat_output
     ], capture_output=True, check=True)
- 
-    # Mix with audio — trim to exact target_duration
+
+    # Mix with audio — loop both to fill exact target_duration
     subprocess.run([
         "ffmpeg", "-y",
-        "-stream_loop", "-1", "-i", concat_output,   # loop video
-        "-stream_loop", "-1", "-i", audio_path,       # loop audio
+        "-stream_loop", "-1", "-i", concat_output,
+        "-stream_loop", "-1", "-i", audio_path,
         "-map", "0:v:0", "-map", "1:a:0",
         "-t", str(target_duration),
         "-c:v", "libx264", "-preset", "ultrafast",
@@ -53,11 +53,11 @@ def assemble_video(
         "-c:a", "aac", "-b:a", "192k",
         output_path
     ], capture_output=True, check=True)
- 
-    # Cleanup
+
+    # Cleanup temp files
     os.remove(concat_file)
     os.remove(concat_output)
- 
+
     print(f"  [Assembler] ✓ Video assembled: {output_path}", flush=True)
     return output_path
 
@@ -76,22 +76,21 @@ def create_shorts(
     result = subprocess.run([
         "ffprobe", "-v", "quiet", "-print_format", "json",
         "-show_format", main_video_path
-    ], capture_output=True, text=True)
+    ], capture_output=True, text=True, timeout=30)
     duration = float(json.loads(result.stdout).get("format", {}).get("duration", 180))
 
-    short_duration = 45  # ← reduce from 50 to 45s (safer margin)
+    short_duration = 45
 
     # Ensure all shorts fit within video duration
     max_shorts = int(duration // short_duration)
-    num_shorts  = min(num_shorts, max_shorts)  # ← never exceed what fits
+    num_shorts  = min(num_shorts, max_shorts)
 
     segment = duration / num_shorts
 
     for i in range(num_shorts):
         start_time = int(i * segment)
-        # Cap end time to not exceed video duration
         actual_duration = min(short_duration, int(duration - start_time - 1))
-        if actual_duration < 20:  # ← skip if less than 20s available
+        if actual_duration < 20:
             print(f"[Assembler] Short {i+1} skipped — not enough video left", flush=True)
             continue
 
@@ -105,7 +104,7 @@ def create_shorts(
                 "-i", audio_path,
                 "-map", "0:v:0", "-map", "1:a:0",
                 "-ss", str(start_time),
-                "-t", str(actual_duration),  # ← use actual_duration not fixed
+                "-t", str(actual_duration),
                 "-vf", "crop=ih*9/16:ih,scale=1080:1920",
                 "-c:v", "libx264", "-preset", "ultrafast",
                 "-crf", "28",
@@ -114,8 +113,14 @@ def create_shorts(
                 "-threads", "1",
                 output_path
             ], check=True, capture_output=True, timeout=120)
-            shorts.append(output_path)
-            print(f"[Assembler] ✓ Short {i+1} created ({actual_duration}s)", flush=True)
+
+            # Verify file exists and has content
+            if os.path.exists(output_path) and os.path.getsize(output_path) > 10000:
+                shorts.append(output_path)
+                print(f"[Assembler] ✓ Short {i+1} created ({actual_duration}s)", flush=True)
+            else:
+                print(f"[Assembler] Short {i+1} file empty/missing — skipping", flush=True)
+
         except Exception as e:
             print(f"[Assembler] Short {i+1} failed: {e}", flush=True)
 

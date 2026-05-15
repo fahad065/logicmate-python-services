@@ -267,7 +267,8 @@ def run_youtube_pipeline(
             log(f"  ✓ Uploaded: {yt_result['url']}")
 
             # Upload shorts
-            for i, short_path in enumerate(metadata.get("shorts", [])):
+            valid_shorts = [s for s in metadata.get("shorts", []) if s and os.path.exists(s)]
+            for i, short_path in enumerate(valid_shorts):
                 try:
                     upload_short(
                         video_path=short_path,
