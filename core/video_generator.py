@@ -81,9 +81,15 @@ def get_scene_prompts(niche: str, count: int, aspect_ratio: str = "16:9") -> lis
 
 def _generate_clip_with_model(model: str, prompt: str, duration: int) -> dict:
     """Try to generate clip with specific model."""
-    # Respect per-model duration limits
-    actual_duration = min(duration, _get_max_duration(model))
-
+    # Hard-coded duration limits per model — never trust _get_max_duration alone
+    model_lower = model.lower()
+    if "seedance" in model_lower or "bytedance" in model_lower:
+        actual_duration = 3   # Seedance ONLY supports 3s
+    elif "wan" in model_lower or "happyhorse" in model_lower or "alibaba" in model_lower:
+        actual_duration = min(duration, 5)   # Wan supports up to 5s
+    else:
+        actual_duration = min(duration, 3)   # Unknown — safe default
+ 
     payload = {
         "model": model,
         "prompt": prompt,
@@ -92,18 +98,18 @@ def _generate_clip_with_model(model: str, prompt: str, duration: int) -> dict:
         "duration": actual_duration,
         "fps": 24,
     }
-
+ 
     resp = requests.post(GENERATE_URL, json=payload, headers=HEADERS, timeout=30)
-
+ 
     if resp.status_code not in (200, 201):
         raise Exception(f"API error {resp.status_code}: {resp.text[:200]}")
-
+ 
     resp_json = resp.json()
     prediction_id = resp_json.get("data", {}).get("id") or resp_json.get("id")
-
+ 
     if not prediction_id:
         raise Exception(f"No prediction_id: {resp.text[:200]}")
-
+ 
     poll_url = f"{ATLAS_BASE}/model/prediction/{prediction_id}"
     return {"prediction_id": prediction_id, "poll_url": poll_url, "duration": actual_duration}
 

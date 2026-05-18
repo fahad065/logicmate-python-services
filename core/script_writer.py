@@ -25,42 +25,66 @@ def generate_youtube_script(niche: str, topic: str) -> tuple[dict, float]:
     """Generate full YouTube script. Returns (script_data, cost)."""
     total_cost = 0.0
  
-    # Script generation
+    prompt = f"""You are an expert YouTube scriptwriter and SEO specialist. Write a detailed, engaging YouTube video script about "{topic}" in the niche of {niche}.
+ 
+        The script MUST be between 1500-2000 words. Count the words carefully. If your script is less than 1500 words, add more detail, examples, and stories.
+        
+        Structure:
+        - HOOK (0-30s): Shocking opening
+        - INTRO (30s-1min): Overview
+        - MAIN CONTENT (1min-6min): 4-5 detailed sections with stories and examples
+        - CONCLUSION (6min-7min): Takeaways and CTA
+        
+        Writing style: Dark, mysterious, authoritative. Short punchy sentences.
+        
+        For description: 300-word SEO description with timestamps and hashtags.
+        
+        For tags: 40-50 simple keyword tags. Rules: NO hashtags, NO special characters, NO commas within a tag, only letters numbers and spaces. Example: dark psychology, manipulation tactics, human behavior
+        
+        Return ONLY valid JSON:
+        {{
+            "title": "engaging clickbait title (max 100 chars)",
+            "description": "300-word SEO description with timestamps and hashtags",
+            "tags": ["dark psychology", "manipulation tactics", ...40-50 clean simple tags],
+            "script": "FULL narration script — MUST BE 1500-2000 WORDS",
+            "thumbnail_text": "3-5 word thumbnail text"
+        }}"""
+ 
     resp = client.chat.completions.create(
         model=get_best_openai_chat_model(),
-        messages=[{"role": "user", "content": f"""You are an expert YouTube scriptwriter and SEO specialist. Write a detailed, engaging YouTube video script about "{topic}" in the niche of {niche}.
-
-            The script must be 1500-2000 words long to fill a 7-8 minute video. Structure it as:
-            - HOOK (0-30s): Shocking opening that grabs attention immediately
-            - INTRO (30s-1min): Brief overview of what viewer will learn
-            - MAIN CONTENT (1min-6min): 4-5 detailed sections with fascinating revelations, examples, and stories
-            - CONCLUSION (6min-7min): Key takeaways and strong call to action
-            
-            Writing style: Dark, mysterious, authoritative. Short punchy sentences. Build suspense throughout.
-            
-            For the description, write a compelling 300-word YouTube description with:
-            - First 2 lines must be attention-grabbing (shown before "Show more")
-            - Include timestamps (00:00 Intro, 01:00 Section 1, etc.)
-            - Add relevant hashtags at the end (#DarkPsychology #Psychology #HumanBehavior etc.)
-            - Include a call to action (Like, Subscribe, Comment)
-            
-            For tags, provide 40-50 simple keyword tags. Rules: single words or short phrases only, no hashtags, no special characters, no punctuation, no commas within a single tag. Example: dark psychology, manipulation tactics, human behavior, mind control
-            
-            Return ONLY valid JSON:
-            {{
-                "title": "engaging clickbait YouTube title with numbers or shock value (max 100 chars)",
-                "description": "full 300-word SEO description with timestamps and hashtags",
-                "tags": ["dark psychology", "manipulation tactics", "human behavior", ...at least 40 clean simple tags],
-                "script": "full narration script (1500-2000 words with all sections)",
-                "thumbnail_text": "short punchy 3-5 word text for thumbnail"
-            }}"""}],
+        messages=[{"role": "user", "content": prompt}],
         response_format={"type": "json_object"},
         temperature=0.8,
+        max_tokens=4000,  # ensure enough tokens for long script
     )
     total_cost += calculate_openai_cost(resp.usage)
  
     import json
     data = json.loads(resp.choices[0].message.content)
+ 
+    # Verify script length — retry if too short
+    script = data.get("script", "")
+    word_count = len(script.split())
+    print(f"  [Script] Word count: {word_count}", flush=True)
+ 
+    if word_count < 800:
+        print(f"  [Script] Too short ({word_count} words) — retrying with stricter prompt...", flush=True)
+        resp2 = client.chat.completions.create(
+            model=get_best_openai_chat_model(),
+            messages=[{"role": "user", "content": f"""Write a LONG detailed YouTube script about "{topic}" for {niche} niche.
+                STRICT REQUIREMENT: The script field MUST contain at least 1500 words.
+                Include detailed explanations, real examples, stories, and multiple sections.
+                Return same JSON format as before."""}],
+            response_format={"type": "json_object"},
+            temperature=0.7,
+            max_tokens=4000,
+        )
+        total_cost += calculate_openai_cost(resp2.usage)
+        data2 = json.loads(resp2.choices[0].message.content)
+        if len(data2.get("script", "").split()) > word_count:
+            data = data2
+            print(f"  [Script] Retry word count: {len(data['script'].split())}", flush=True)
+ 
     return data, total_cost
 
 
