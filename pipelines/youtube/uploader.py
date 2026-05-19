@@ -118,17 +118,21 @@ def _clean_tags(tags: list) -> list:
 
 def _build_final_tags(tags: list, max_chars: int = 490) -> list:
     cleaned = _clean_tags(tags)
-    # Debug — print all cleaned tags
     print(f"  [YouTube] Cleaned tags ({len(cleaned)}): {cleaned[:10]}", flush=True)
     tag_str = ""
     final = []
     for tag in cleaned:
+        # Skip any tag with numbers only or less than 3 chars
+        if len(tag) < 3:
+            continue
         addition = (", " if tag_str else "") + tag
         if len(tag_str) + len(addition) <= max_chars:
             final.append(tag)
             tag_str += addition
         else:
             break
+    # Hard limit — YouTube rejects if too many tags
+    final = final[:30]
     print(f"  [YouTube] Final tags ({len(final)}): {final}", flush=True)
     return final
 
@@ -145,6 +149,10 @@ def upload_to_youtube(
 
     youtube    = _get_youtube_service(user_id)
     final_tags = _build_final_tags(tags)
+
+    for tag in final_tags:
+        if any(c for c in tag if not c.isalnum() and c not in (' ', '-', '&')):
+            print(f"  [YouTube] SUSPICIOUS TAG: '{tag}'", flush=True)
 
     print(f"  [YouTube] Using {len(final_tags)} tags", flush=True)
 

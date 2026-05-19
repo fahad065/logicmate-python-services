@@ -55,7 +55,7 @@ def generate_youtube_script(niche: str, topic: str) -> tuple[dict, float]:
         messages=[{"role": "user", "content": prompt}],
         response_format={"type": "json_object"},
         temperature=0.8,
-        max_tokens=4000,  # ensure enough tokens for long script
+        max_tokens=6000,  # ensure enough tokens for long script
     )
     total_cost += calculate_openai_cost(resp.usage)
  
@@ -77,13 +77,13 @@ def generate_youtube_script(niche: str, topic: str) -> tuple[dict, float]:
                 Return same JSON format as before."""}],
             response_format={"type": "json_object"},
             temperature=0.7,
-            max_tokens=4000,
+            max_tokens=6000,
         )
         total_cost += calculate_openai_cost(resp2.usage)
         data2 = json.loads(resp2.choices[0].message.content)
-        if len(data2.get("script", "").split()) > word_count:
-            data = data2
-            print(f"  [Script] Retry word count: {len(data['script'].split())}", flush=True)
+        retry_count = len(data2.get("script", "").split())
+        print(f"  [Script] Retry word count: {retry_count}", flush=True)
+        data = data2  # ← always use retry, don't check if longer
  
     return data, total_cost
 
