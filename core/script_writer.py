@@ -24,9 +24,9 @@ def calculate_openai_cost(usage) -> float:
 def generate_youtube_script(niche: str, topic: str) -> tuple[dict, float]:
     """Generate full YouTube script. Returns (script_data, cost)."""
     total_cost = 0.0
- 
+
     prompt = f"""You are an expert YouTube scriptwriter and SEO specialist. Write a detailed, engaging YouTube video script about "{topic}" in the niche of {niche}.
- 
+
         The script MUST be between 1500-2000 words. Count the words carefully. If your script is less than 1500 words, add more detail, examples, and stories.
         
         Structure:
@@ -49,42 +49,53 @@ def generate_youtube_script(niche: str, topic: str) -> tuple[dict, float]:
             "script": "FULL narration script — MUST BE 1500-2000 WORDS",
             "thumbnail_text": "3-5 word thumbnail text"
         }}"""
- 
+
     resp = client.chat.completions.create(
         model=get_best_openai_chat_model(),
         messages=[{"role": "user", "content": prompt}],
         response_format={"type": "json_object"},
         temperature=0.8,
-        max_tokens=6000,  # ensure enough tokens for long script
+        max_tokens=6000,
     )
     total_cost += calculate_openai_cost(resp.usage)
- 
+
     import json
     data = json.loads(resp.choices[0].message.content)
- 
+
     # Verify script length — retry if too short
     script = data.get("script", "")
     word_count = len(script.split())
     print(f"  [Script] Word count: {word_count}", flush=True)
- 
+
     if word_count < 800:
-        print(f"  [Script] Too short ({word_count} words) — retrying with stricter prompt...", flush=True)
+        print(f"  [Script] Too short ({word_count} words) — retrying...", flush=True)
         resp2 = client.chat.completions.create(
             model=get_best_openai_chat_model(),
-            messages=[{"role": "user", "content": f"""Write a LONG detailed YouTube script about "{topic}" for {niche} niche.
-                STRICT REQUIREMENT: The script field MUST contain at least 1500 words.
-                Include detailed explanations, real examples, stories, and multiple sections.
-                Return same JSON format as before."""}],
+            messages=[{"role": "user", "content": f"""You are a YouTube scriptwriter. Write a detailed script about "{topic}" for {niche} niche.
+
+CRITICAL: The "script" field MUST be at least 1500 words. Count carefully.
+
+Return ONLY this JSON format:
+{{
+    "title": "engaging YouTube title (max 100 chars)",
+    "description": "300-word SEO description with timestamps and hashtags",
+    "tags": ["tag1", "tag2", "tag3"],
+    "script": "FULL script here — minimum 1500 words, include hook, intro, 4-5 main sections with examples and stories, conclusion with CTA",
+    "thumbnail_text": "3-5 word text"
+}}"""}],
             response_format={"type": "json_object"},
             temperature=0.7,
             max_tokens=6000,
         )
         total_cost += calculate_openai_cost(resp2.usage)
         data2 = json.loads(resp2.choices[0].message.content)
-        retry_count = len(data2.get("script", "").split())
-        print(f"  [Script] Retry word count: {retry_count}", flush=True)
-        data = data2  # ← always use retry, don't check if longer
- 
+        if data2.get("description") and data2.get("script"):
+            retry_count = len(data2.get("script", "").split())
+            print(f"  [Script] Retry word count: {retry_count}", flush=True)
+            data = data2
+        else:
+            print(f"  [Script] Retry missing fields — keeping original", flush=True)
+
     return data, total_cost
 
 
