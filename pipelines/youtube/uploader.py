@@ -242,12 +242,14 @@ def upload_short(
         }
     }
 
-    media = MediaFileUpload(video_path, mimetype="video/mp4", resumable=False)
+    media = MediaFileUpload(video_path, mimetype="video/mp4", resumable=True, chunksize=5 * 1024 * 1024)
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
 
     response = None
     while response is None:
-        _, response = request.next_chunk()
+        status, response = request.next_chunk()
+        if status:
+            print(f"  [Short] Upload progress: {int(status.progress() * 100)}%", flush=True)
 
     video_id  = response["id"]
     video_url = f"https://www.youtube.com/shorts/{video_id}"
